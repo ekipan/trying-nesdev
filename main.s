@@ -343,14 +343,15 @@ nmi: ; deadline of 2273c to draw
     ; send shadow registers and oam to ppu
     DO lda NmiCtrl, sta PpuCtrl
     DO lda NmiMask, sta PpuMask
-    DO lda NmiScrollX, sta PpuScroll
-    DO lda NmiScrollY, sta PpuScroll
-    lda NmiOam      ; page to pull sprites from
-    beq :+          ; disabled (0)?
+    and %00010000   ; sprites
+    beq :+          ;   disabled? -> skip dma (will decay!)
     ldx #0          ; start of page:
     stx OamAddr     ;   ppu offset to write from, wraps.
-    sta OamDma      ; 514c, but neglect will corrupt.
-:   ; now start the draw command interpreter:
+    lda NmiOam      ; page to pull sprites from
+    sta OamDma      ; costs 514c
+:   DO lda NmiScrollX, sta PpuScroll
+    DO lda NmiScrollY, sta PpuScroll
+    ; now start the draw command interpreter:
     ldx QTail       ; x = cursor into page-aligned ring buffer
 @interpret:
         cpx QCommit
