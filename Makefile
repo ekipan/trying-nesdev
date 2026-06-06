@@ -14,10 +14,10 @@ MESEN ?= Mesen # NES emulator with debugging features
 ## Build targets:
 
 o/ff.nes: link.cfg o/main.o o/fat.o | o
-	$(LD65) -o $@ -C $^
+	$(LD65) --dbgfile $@.dbg -m $@.m -o $@ -C $^
 
 o/%.o: %.s | o
-	$(CA65) -l $@.l -o $@ $<
+	$(CA65) -g -l $@.l -o $@ $<
 
 o:
 	# Try "make help" next for some info.
