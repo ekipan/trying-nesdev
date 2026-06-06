@@ -22,15 +22,13 @@
 ; assembles up into rom, runtime prepends down into ram.
 ; `find` scans fwd until a `0` XT after the last rom word.
 
-.macro DEF NAME, FLAGS ; assemble an entry into DICT rom.
-    .local XT, LEN
-    LEN = (FLAGS+0) | .strlen(NAME) ; blank FLAGS needs +0.
+.macro DEF XT, NAME, FLAGS ; assemble an entry into DICT rom.
     .pushseg
     .segment "DICT" ; a nametoken (nt) is an entry address:
-        .addr XT        ; execution token is a code address
-        .byte LEN, NAME ; flags + length, characters
+        .addr XT    ; execution token is a code address
+        .byte (FLAGS+0) | .strlen(NAME), NAME ; blank needs +0
     .popseg ; back to original segment:
-    XT = *  ; where the code will follow.
+    XT:     ; where the code will follow.
 .endmacro ; eg: foo: DEF "FOO" ; ( a -- b ) does foo.
 
 ; TODO write `find` then put these there
@@ -58,7 +56,7 @@ Dst: .res 2  ; \ load/store pointers for y-indexed
 Src: .res 2  ; / transfer of multiple bytes.
 
 .segment "CODE"
-store: DEF "!" ; ( n addr -- ) store n at addr.
+DEF store, "!" ; ( n addr -- ) store n at addr.
     lda L,x
     ldy H,x
     inx             ; drop addr
@@ -74,7 +72,7 @@ store_ya: ; ( n -- ) store at y:a.
     inx             ; drop n
     rts
 
-fetch: DEF "@" ; ( addr -- n ) fetch n from addr.
+DEF fetch, "@" ; ( addr -- n ) fetch n from addr.
     lda L,x
     ldy H,x
     JMP1
@@ -89,7 +87,7 @@ fetch_ya: ; ( -- n ) fetch from y:a.
     sta H,x
     rts
 
-c_store: DEF "C!" ; ( c addr -- ) store c at addr.
+DEF c_store, "C!" ; ( c addr -- ) store c at addr.
     lda L+0,x       ; L: ..[ll]cc   H:  .. hh 00
     sta H-1,x       ;    .. ll cc      [ll]hh 00
     lda L+1,x       ;    .. ll[cc]      ll hh 00
@@ -97,17 +95,17 @@ c_store: DEF "C!" ; ( c addr -- ) store c at addr.
     _ inx, inx      ; drop c and addr.
     rts
 
-c_fetch: DEF "C@" ; ( addr -- c ) fetch c from addr.
+DEF c_fetch, "C@" ; ( addr -- c ) fetch c from addr.
     lda L+0,x       ; L: ..[ll]   H:  .. hh
     sta H-1,x       ;    .. ll       [ll]hh
     lda (H-1,x)     ;    .. ll       [ll hh]
     jmp put_unsigned_a
 
-two_plus: DEF "2+" ; ( n -- n+2 ) add 2.
+DEF two_plus, "2+" ; ( n -- n+2 ) add 2.
     inc L,x
     bne one_plus
     inc H,x
-one_plus: DEF "1+" ; ( n -- n+1 ) add 1.
+DEF one_plus, "1+" ; ( n -- n+1 ) add 1.
     inc L,x
     bne :+
     inc H,x
@@ -122,7 +120,7 @@ put_ya: ; ( ? -- y:a )
     sta L,x
     rts
 
-zero: DEF "0" ; ( -- 0 )
+DEF zero, "0" ; ( -- 0 )
     lda #0
 push_unsigned_a: ; ( -- 0:a )
     dex
@@ -132,7 +130,7 @@ put_unsigned_a: ; ( ? -- 0:a )
     sta L,x
     rts
 
-neg_one: DEF "-1" ; ( -- -1 )
+DEF neg_one, "-1" ; ( -- -1 )
     lda #$ff
     tay
     jmp :+
@@ -165,10 +163,10 @@ QTail:   .res 1 ; 3) nmi interprets and moves fwd.
 ; wrap in memory that won't usually be literally true.
 
 .segment "CODE"
-to_q: DEF ">Q" ; ( addr -- ) append address to queue.
+DEF to_q, ">Q" ; ( addr -- ) append address to queue.
     Lda H,x         ; queue expects big-endian!
     jsr q_a
-c_to_q: DEF "C>Q" ; ( c -- ) append byte to queue.
+DEF c_to_q, "C>Q" ; ( c -- ) append byte to queue.
     lda L,x
     inx
 q_a:
@@ -178,10 +176,10 @@ q_a:
     sty QHead
     rts
 
-q_commit: DEF "Q-COMMIT" ; ( -- ) send queued draw commands.
+DEF q_commit, "Q-COMMIT" ; ( -- ) send queued draw commands.
     _ lda QHead, sta QCommit, rts
 
-q_flush: DEF "Q-FLUSH" ; ( -- ) wait for draw to finish.
+DEF q_flush, "Q-FLUSH" ; ( -- ) wait for draw to finish.
     lda QCommit
     ; TODO degenerate case: malformed queue that defers often
     ; but overshoots QCommit and never finishes. could add an
@@ -225,7 +223,7 @@ PpuAddr =   $2006 ; latch, then send addrh, addrl
 PpuData =   $2007 ; increments by 1 or 32 (PpuCtrl vert)
 
 .segment "CODE" ; service a nonmaskable interrupt.
-vblank: DEF "VBLANK" ; ( -- ) wait for next vblank.
+DEF vblank, "VBLANK" ; ( -- ) wait for next vblank.
     lda NmiFrames
 :   _ cmp NmiFrames, beq :-
     rts
