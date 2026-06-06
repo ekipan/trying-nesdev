@@ -118,15 +118,37 @@ DEF c_fetch, "C@" ; ( addr -- c ) fetch c from addr.
     lda (H-1,x)     ;    .. ll       [ll hh]
     jmp put_a
 
+DEF two_minus, "2-" ; ( n -- n-2 ) subtract 2.
+    jsr one_minus
+DEF one_minus, "1-" ; ( n -- n-1 ) subtract 1.
+    dec L,x
+    bne :+
+    dec H,x
+:   rts
+
 DEF two_plus, "2+" ; ( n -- n+2 ) add 2.
-    inc L,x
-    bne one_plus
-    inc H,x
+    jsr one_plus
 DEF one_plus, "1+" ; ( n -- n+1 ) add 1.
     inc L,x
     bne :+
     inc H,x
 :   rts
+
+DEF four_div, "4/" ; ( n -- n/4 ) signed right shift.
+    jsr two_div
+DEF two_div, "2/" ; ( n -- n/2 )
+    lda #$80
+    cmp H,x         ; carry = H+x.7
+    ror H,x
+    ror L,x
+    rts
+
+DEF four_times, "4*" ; ( n -- n*4 ) left shift.
+    jsr two_times
+DEF two_times, "2*" ; ( n -- n*2 )
+    asl L,x
+    rol H,x
+    rts
 
 lit: ; ( -- n ) fetch through return address.
     ; TODO lit
