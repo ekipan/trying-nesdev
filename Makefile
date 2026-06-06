@@ -1,8 +1,9 @@
 
-## Aspiring to be: a fast, fun STC Forth for the NES, aping
-##   much of durexForth's design.
-## Currently: a noninteractive scrolling toy, plus *lots*
-##   of untested code that is proving fun to write.
+# Forever TODO: sync this and README with the actual status.
+
+## Just a noninteractive scrolling demo right now, plus
+## *lots* of untested code that is proving fun to write.
+## Hoping to be: a fast, fun NES Forth akin to durexForth.
 #:
 ## Makefile variables, you'll need this software:
 
