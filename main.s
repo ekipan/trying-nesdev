@@ -406,12 +406,19 @@ RomPalette:
     .endrepeat
 
 ; nes cartridge configurations vary wildly. emulators support
-; a huge range but I still need to study the constraints of
-; making a feasibly realizable cart (TODO).
+; a huge range, but I still need to study the constraints of
+; a feasibly realizable cart (TODO). I'm not very interested
+; in making one but I'd like it to be possible.
 ;
-; in lieu of studying the tape recorder (TODO), I'd like a
-; hefty portion of battery ram for long term user storage,
-; mostly of typed-in forth source code.
+; one scratch prg-ram bank: oam? drawqueue? blockbuffer?
+; the rest to compile user code and dictionary entries into.
+; nes powerdown risks prg-ram corruption via random
+; instructions. fine for scratch.
+;
+; in lieu of studying the tape recorder (TODO), I'd wish for
+; extra prg-ram banks to store user source code and data
+; blocks long term. risk of rogue bank-switch then corruption
+; is probably astronomical. would be curious.
 
 ; cart config: https://www.nesdev.org/wiki/Mapper
 Mapper =  1 ; $s0mm: w/ sub. 0 nrom, 1 mmc1, 218 nesmon's
