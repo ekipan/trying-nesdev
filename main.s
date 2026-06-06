@@ -12,6 +12,7 @@
     .endif ; eg: _ pha, txa, pha, tya, pha
 .endmacro  ; eg: _ jsr foo, jsr bar, jmp qux
 ; rule: 0/1 loads to start, 0/1 branches to end.
+; *usually* avoid: rts, rti, jmp.
 
 ; inserted opcodes overlap and skip next instruction:
 .define JMP1 .byte $24 ; bit zp  ; 1 operand byte
