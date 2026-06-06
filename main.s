@@ -39,9 +39,6 @@
 ; Length =    $1f ; mask: up to 31 character names
 
 ; TODO DEFCONST/DEFVALUE macro body sketches:
-; ldy #>VALUE ; msb first to ease runtime compile:
-; lda #<VALUE ; : constant ( n "name" -- ) ...
-; jmp push_ya ;   split ( lsb msb ) ldy #, lda #, ... ;
 ; lda abs:ADDR ; possibly waste a byte on absolute
 ; ldy ADDR+1   ; addressing, makes uniform to ease
 ; jmp push_ya  ; storing through a higher-level (TO).
