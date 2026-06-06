@@ -408,8 +408,12 @@ quit:
 main: ; ready to go.
     jsr vsync       ; wait one frame
     lda #1 ; pixel
+    jsr @add_y
+    jmp main
+
+@add_y: ; y += a, up to 15 pixels, adjusting for seam
     clc
-    adc NmiScrollY  ; scroll up
+    adc NmiScrollY
     tay
     cmp #$f0
     bcc :+          ; not between screens?
@@ -419,7 +423,7 @@ main: ; ready to go.
     eor NmiCtrl
     sta NmiCtrl    ; flip ntbl \ data
 :   sty NmiScrollY ;           / race 3c
-    jmp main
+    rts
 
 .segment "RODATA"
 RomPalette:
