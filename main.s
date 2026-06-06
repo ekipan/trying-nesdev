@@ -97,7 +97,7 @@ DEF c_fetch, "C@" ; ( addr -- c ) fetch c from addr.
     lda L+0,x       ; L: ..[ll]   H:  .. hh
     sta H-1,x       ;    .. ll       [ll]hh
     lda (H-1,x)     ;    .. ll       [ll hh]
-    jmp put_unsigned_a
+    jmp put_a
 
 DEF two_plus, "2+" ; ( n -- n+2 ) add 2.
     inc L,x
@@ -118,28 +118,25 @@ put_ya: ; ( ? -- y:a )
     sta L,x
     rts
 
-DEF zero, "0" ; ( -- 0 )
-    lda #0
-push_unsigned_a: ; ( -- 0:a )
+; forth flags, to be branched to from testing words:
+
+DEF neg_one, "-1" ; ( -- -1 )
+    lda #$ff
+push_neg_a:
     dex
-put_unsigned_a: ; ( ? -- 0:a )
-    ldy #0
+put_neg_a:
+    ldy #$ff
     sty H,x
     sta L,x
     rts
 
-DEF neg_one, "-1" ; ( -- -1 )
-    lda #$ff
-    tay
-    jmp :+
-push_signed_a:
+DEF zero, "0" ; ( -- 0 )
+    lda #0
+push_a: ; ( -- 0:a )
     dex
-put_signed_a:
+put_a: ; ( ? -- 0:a )
     ldy #0
-    cmp #0
-    bpl :+
-    dey
-:   sty H,x
+    sty H,x
     sta L,x
     rts
 
