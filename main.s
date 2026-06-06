@@ -189,47 +189,47 @@ put_a: ; ( ? -- 0:a )
 
 .segment "QUEUE"
      .align 256 ; page-aligned so indices wrap.
-QDraw: .res 256 ; encoded drawing commands queue.
+VCmds: .res 256 ; encoded drawing commands queue.
 
 .segment "ZEROPAGE" ; $0-ff indices into the queue:
-QHead:   .res 1 ; 1) main append commands here.
-QCommit: .res 1 ; 2) main moves this fwd to publish to nmi.
-QTail:   .res 1 ; 3) nmi interprets and moves fwd.
+VHead:   .res 1 ; 1) main append commands here.
+VCommit: .res 1 ; 2) main moves this fwd to publish to nmi.
+VTail:   .res 1 ; 3) nmi interprets and moves fwd.
 ; conceptually tail <= commit <= head, though since they
 ; wrap in memory that won't usually be literally true.
 
 .segment "CODE"
-DEF to_q, ">Q" ; ( addr -- ) append address to queue.
+DEF to_v, ">V" ; ( addr -- ) append address to queue.
     Lda H,x         ; queue expects big-endian!
-    jsr q_a
-DEF c_to_q, "C>Q" ; ( c -- ) append byte to queue.
+    jsr v_a
+DEF c_to_v, "C>V" ; ( c -- ) append byte to queue.
     lda L,x
     inx
-q_a:
-    ldy QHead
-    sta QDraw,y
+v_a:
+    ldy VHead
+    sta VCmds,y
     iny             ; full page buffer, expects wraparound.
-    sty QHead
+    sty VHead
     rts
 
-DEF q_commit, "Q-COMMIT" ; ( -- ) send queued draw commands.
-    _ lda QHead, sta QCommit, rts
+DEF vcommit, "VCOMMIT" ; ( -- ) send queued draw commands.
+    _ lda VHead, sta VCommit, rts
 
-DEF q_flush, "Q-FLUSH" ; ( -- ) wait for draw to finish.
-    lda QCommit
+DEF vflush, "VFLUSH" ; ( -- ) wait for draw to finish.
+    lda VCommit
     ; TODO degenerate case: malformed queue that defers often
-    ; but overshoots QCommit and never finishes. could add an
+    ; but overshoots VCommit and never finishes. could add an
     ; NmiFrames check, or rely on nmi break key (also TODO).
-:   cmp QTail       ; nmi will failsafe on a runaway queue.
+:   cmp VTail       ; nmi will failsafe on a runaway queue.
     bne :-          ; it might take several frames though.
     rts
 
-QImmediate =  $80 ; args: len val1 val2 val3 ...
-QFill =       $81 ; args: len val
-QTransfer =   $82 ; args: len addrh addrl
-QHorizontal = $83 ; \ set PpuCtrl
-QVertical =   $84 ; / direction bit
-QEnd =        $85 ; defer rest of queue to next nmi
+VImmediate =  $80 ; args: len val1 val2 val3 ...
+VFill =       $81 ; args: len val
+VTransfer =   $82 ; args: len addrh addrl
+VHorizontal = $83 ; \ set PpuCtrl
+VVertical =   $84 ; / direction bit
+VEnd =        $85 ; stop drawing until next frame
 
 ; NMI -------------------------------------------------------
 
@@ -286,7 +286,7 @@ nmi: ; 2270c deadline to finish drawing
     sta PpuData  ; / byte     4c | TODO unroll?
     _ iny, cpy #$20, bne :- ; 7c / +138 bytes -160 cycles
 :   ; interpret draw commands and move tail forward:
-    _ ldx QTail, jsr @interpret_ring, stx QTail
+    _ ldx VTail, jsr @interpret_ring, stx VTail
     ; https://www.nesdev.org/wiki/PPU_scrolling#Frequent_pitfalls
     _ lda NmiScrollX, sta PpuScroll ; must scroll after
     _ lda NmiScrollY, sta PpuScroll ; PpuAddr writes
@@ -304,7 +304,7 @@ nmi: ; 2270c deadline to finish drawing
     jmp @loop
 @immediate: ; (x)y=len val1 val2 val3 ...
 :   inx
-    lda QDraw,x     ; val#
+    lda VCmds,x     ; val#
     _ sta PpuData, dey, bne :-
     beq @inx_and_loop
 ; most common command, to fallthru into @loop:
@@ -316,34 +316,34 @@ nmi: ; 2270c deadline to finish drawing
     inc NmiBusy     ; tally one command finished
     bmi @abandon    ; >127? probably a runaway queue
   @interpret_ring: ; x = cursor into page-aligned ring buffer
-    _ cpx QCommit, beq @rts ; no work left to do?
+    _ cpx VCommit, beq @rts ; no work left to do?
     ; command bytes:  (x)opcode (arg1 arg2 ...)
-    lda QDraw,x     ; (x)a=opcode (arg1 ...)
+    lda VCmds,x     ; (x)a=opcode (arg1 ...)
     inx             ; a=opcode (x)(arg1 ...)
-    ldy QDraw,x     ; a=opcode (x)y=(arg1) (...)
+    ldy VCmds,x     ; a=opcode (x)y=(arg1) (...)
     _ cmp #$40, bcc @set_addr ; $0-3f, valid ppu page?
-    _ cmp #QTransfer, beq @transfer
-    _ cmp #QFill, beq @fill
-    _ cmp #QImmediate, beq @immediate
-    _ cmp #QHorizontal, beq @horizontal
-    _ cmp #QVertical, beq @vertical
-    _ cmp #QEnd, beq @rts ; end frame: defer to next nmi
+    _ cmp #VTransfer, beq @transfer
+    _ cmp #VFill, beq @fill
+    _ cmp #VImmediate, beq @immediate
+    _ cmp #VHorizontal, beq @horizontal
+    _ cmp #VVertical, beq @vertical
+    _ cmp #VEnd, beq @rts ; end frame: defer to next nmi
   @abandon: ; malformed command (or runaway queue).
-    ldx QCommit
+    ldx VCommit
   @rts:
     rts
 @fill: ; (x)y=len val
     inx
-    lda QDraw,x     ; val
+    lda VCmds,x     ; val
 :   _ sta PpuData, dey, bne :-
     beq @inx_and_loop
 @transfer: ; (x)y=len $hh $ll
     sty NmiW+2      ; len
     inx
-    lda QDraw,x     ; $hh
+    lda VCmds,x     ; $hh
     sta NmiW+1      ; read addr high
     inx
-    lda QDraw,x     ; $ll
+    lda VCmds,x     ; $ll
     sta NmiW        ; read addr low
     ldy #0          ; scan fwd from 0 to len:
 :   lda (NmiW),y
