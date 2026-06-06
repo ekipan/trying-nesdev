@@ -35,7 +35,7 @@
     .popseg ; back to original segment:
     XT:     ; where the code will follow.
 .endmacro ; eg: foo: DEF "FOO" ; ( a -- b ) does foo.
-; xt field first makes an nt a direct xt pointer.
+; xt field first makes an nt a direct xt pointer: >XT = @
 
 ; TODO write `find` then put these there
 ; Immediate = $80 ; flag: execute even in compile mode
