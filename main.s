@@ -1,6 +1,10 @@
 
 ; experiments and studies towards a family forth.
 ; just a noninteractive scrolling demo so far (TODO).
+;
+; to jump around, grep for:
+; /code_label:/ /DEF forth_code_label/ /"FORTH-WORD"/
+; /DataLabel:/ /ConstantLabel =/ /MACRO /
 
 ; MACROS ----------------------------------------------------
 
@@ -31,6 +35,7 @@
     .popseg ; back to original segment:
     XT:     ; where the code will follow.
 .endmacro ; eg: foo: DEF "FOO" ; ( a -- b ) does foo.
+; xt field first makes an nt a direct xt pointer.
 
 ; TODO write `find` then put these there
 ; Immediate = $80 ; flag: execute even in compile mode
@@ -38,10 +43,24 @@
 ; Hidden =    $20 ; flag: skipped by find
 ; Length =    $1f ; mask: up to 31 character names
 
-; TODO DEFCONST/DEFVALUE macro body sketches:
-; lda abs:ADDR ; possibly waste a byte on absolute
-; ldy ADDR+1   ; addressing, makes uniform to ease
-; jmp push_ya  ; storing through a higher-level (TO).
+.macro CONSTANT LABEL_EQ, VALUE ; push value to pstack.
+    lda #<VALUE
+    ldy #>VALUE
+    jmp push_ya
+    LABEL_EQ VALUE
+.endmacro ; eg: ; DEF foo, "FOO" ; CONSTANT Foo =, 123
+; integrated "=" is weird but greppable. TODO optimize byte?
+
+.macro CVALUE ADDR ; fetch unsigned byte value from ram.
+    lda abs:ADDR
+    jmp push_a
+.endmacro ; wasted abs byte for runtime to store through.
+
+.macro VALUE ADDR ; fetch cell value from ram.
+    ldy abs:ADDR+1
+    lda ADDR
+    jmp push_ya
+.endmacro ; runtime can detect size by first opcode.
 
 ; CORE ------------------------------------------------------
 
