@@ -1,4 +1,4 @@
-.linecont + ; .feature line_continuations ; doesn't work??
+.linecont +
 
 ; my own special snowflake 8x8 font.
 ; there are many like it but this one is mine.
@@ -7,22 +7,12 @@
     .byte I,J,K,L,M,N,O,P,I,J,K,L,M,N,O,P ; nes bitplanes.
 .endmacro ; 16 bytes per.
 
-; god this made me pull my hair out. the error and its doc:
-;
-; $ ca65 -o /dev/null <(printf '.macro example a\n.endmacro\n')
-; /dev/fd/63(1): Error: Unexpected trailing garbage characters
-;
-; > The names "a", "x" and "y" should be avoided for macro
-; > parameters, as these will usually conflict with the 6502
-; > registers.
-
 .macro FILL N
     .repeat N
         GLYPH 0,0,0,$38,0,0,0,0 ; 3 dots in the middle.
     .endrepeat
 .endmacro
 
-; my goofy macro to assemble 4 glyphs:
 .macro G \
     A0,B0,C0,D0, A1,B1,C1,D1, A2,B2,C2,D2, A3,B3,C3,D3, \
     A4,B4,C4,D4, A5,B5,C5,D5, A6,B6,C6,D6, A7,B7,C7,D7
