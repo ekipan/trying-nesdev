@@ -259,7 +259,7 @@ PpuAddr =   $2006 ; latch, then send addrh, addrl
 PpuData =   $2007 ; increments by 1 or 32 (PpuCtrl vert)
 
 .segment "CODE" ; service a nonmaskable interrupt.
-DEF vblank, "VBLANK" ; ( -- ) wait for next vblank.
+DEF vsync, "VSYNC" ; ( -- ) wait for next vblank.
     lda NmiFrames
 :   _ cmp NmiFrames, beq :-
     rts
@@ -406,7 +406,7 @@ quit:
     _ lda #$00, sta NmiBusy    ; unlock nmi and:
     _ lda #$80, sta NmiCtrl, sta PpuCtrl ; enable
 main: ; ready to go.
-    jsr vblank      ; wait one frame
+    jsr vsync       ; wait one frame
     lda #1 ; pixel
     clc
     adc NmiScrollY  ; scroll up
