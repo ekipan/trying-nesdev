@@ -94,7 +94,7 @@ DEF fetch, "@" ; ( addr -- n ) fetch n from addr.
     ldy H,x
     JMP1
 fetch_ya: ; ( -- n ) fetch from y:a.
-    dex
+    dex             ; add empty slot
     sta Src
     sty Src+1
     ldy #0
@@ -192,7 +192,7 @@ put_a: ; ( ? -- 0:a )
 VCmds: .res 256 ; encoded drawing commands queue.
 
 .segment "ZEROPAGE" ; $0-ff indices into the queue:
-VHead:   .res 1 ; 1) main append commands here.
+VHead:   .res 1 ; 1) main appends commands here.
 VCommit: .res 1 ; 2) main moves this fwd to publish to nmi.
 VTail:   .res 1 ; 3) nmi interprets and moves fwd.
 ; conceptually tail <= commit <= head, though since they
@@ -287,6 +287,7 @@ nmi: ; 2270c deadline to finish drawing
     _ iny, cpy #$20, bne :- ; 7c / +138 bytes -160 cycles
 :   ; interpret draw commands and move tail forward:
     _ ldx VTail, jsr @interpret_ring, stx VTail
+    bit PpuStatus ; reset latch for:
     ; https://www.nesdev.org/wiki/PPU_scrolling#Frequent_pitfalls
     _ lda NmiScrollX, sta PpuScroll ; must scroll after
     _ lda NmiScrollY, sta PpuScroll ; PpuAddr writes
@@ -405,10 +406,10 @@ quit:
     _ lda #$00, sta NmiBusy    ; unlock nmi and:
     _ lda #$80, sta NmiCtrl, sta PpuCtrl ; enable
 main: ; ready to go.
-    jsr vblank     ; wait one frame
+    jsr vblank      ; wait one frame
     lda #1 ; pixel
     clc
-    adc NmiScrollY ; scroll up
+    adc NmiScrollY  ; scroll up
     tay
     cmp #$f0
     bcc :+          ; not between screens?
