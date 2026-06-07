@@ -15,11 +15,11 @@ MESEN ?= Mesen # NES emulator with debugging features.
 #:
 ## Build targets:
 
-COMPILE = $(CA65) -g -l $@.l -o $@ $<
+COMPILE = $(CA65) -g -l $@.lst -o $@ $<
 DEPS ?= o/0-link.cfg o/1-ines.o o/main.o o/fat.o
 
 o/ff.nes: $(DEPS) | o # (default)
-	$(LD65) --dbgfile $@.dbg -m $@.m -o $@ -C $^
+	$(LD65) --dbgfile $@.dbg -m $@.map -o $@ -C $^
 o/%.o: %.s | o
 	$(COMPILE)
 o/1-%.o: o/0-%.s    # sources extracted from:
