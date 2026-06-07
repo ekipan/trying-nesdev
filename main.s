@@ -259,11 +259,6 @@ PpuAddr =   $2006 ; latch, then send addrh, addrl
 PpuData =   $2007 ; increments by 1 or 32 (PpuCtrl vert)
 
 .segment "CODE" ; service a nonmaskable interrupt.
-DEF vsync, "VSYNC" ; ( -- ) wait for next vblank.
-    lda NmiFrames
-:   _ cmp NmiFrames, beq :-
-    rts
-
 nmi: ; 2270c deadline to finish drawing
     _ bit Custom, bpl :+ ; default nmi service?
     jmp (Nmi)       ; no, custom
@@ -355,24 +350,21 @@ nmi: ; 2270c deadline to finish drawing
     beq @inx_and_loop
     rts ; (unnecessary, for the debugger)
 
+DEF vsync, "VSYNC" ; ( -- ) wait for next vblank.
+    lda NmiFrames
+:   _ cmp NmiFrames, beq :-
+    rts
+
+.segment "RODATA"
+RomPalette:
+    .align 256
+    .repeat 8
+        .byte $0F, $29, $17, $20
+    .endrepeat
+
 ; RESET, MAIN -----------------------------------------------
 
-.segment "ROMVEC" ; in rom, required by the cpu:
-    .addr nmi   ; at vblank
-    .addr reset ; at power on and reset
-    .addr irq   ; unused by default
-
-.segment "RAMVEC" ; overrides:
-Custom: .res 1 ; custom handlers: $80 nmi, $40 irq
-Nmi:    .res 2 ; \ handler routine pointers. set Custom
-Irq:    .res 2 ; / to 0 first to update atomically.
-
 .segment "CODE"
-irq:
-    _ bit Custom, bvc :+
-    jmp (Irq)
-:   rti
-
 reset: ; just powered on, turn off all the things:
     _ sei, cld
     _ ldx #$40, stx Joy2 ; sound, and screen:
@@ -428,12 +420,21 @@ main: ; ready to go.
 :   sty NmiScrollY ;           / race 3c
     rts
 
-.segment "RODATA"
-RomPalette:
-    .align 256
-    .repeat 8
-        .byte $0F, $29, $17, $20
-    .endrepeat
+.segment "CODE"
+irq:
+    _ bit Custom, bvc :+
+    jmp (Irq)
+:   rti
+
+.segment "RAMVEC" ; overrides:
+Custom: .res 1 ; custom handlers: $80 nmi, $40 irq
+Nmi:    .res 2 ; \ handler routine pointers. set Custom
+Irq:    .res 2 ; / to 0 first to update atomically.
+
+.segment "ROMVEC" ; in rom, required by the cpu:
+    .addr nmi   ; at vblank
+    .addr reset ; at power on and reset
+    .addr irq   ; unused by default
 
 ; nes cartridge configurations vary wildly. emulators support
 ; a huge range, but I still need to study the constraints of
