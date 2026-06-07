@@ -5,37 +5,40 @@
 ## *lots* of untested code that is proving fun to write.
 ## Hoping to be: a fast, fun NES Forth akin to durexForth.
 #:
-## Makefile variables, you'll need this software:
-
+## You'll need this software:
 CA65 ?= ca65 # featureful 6502 assembler, in the cc65 suite.
 LD65 ?= ld65 # and its linker.
 MESEN ?= Mesen # NES emulator with debugging features.
 ## also awk and sed for generated source.
-
 #:
 ## Build targets:
 
 COMPILE = $(CA65) -g -l $@.lst -o $@ $<
-DEPS ?= o/0-link.cfg o/1-ines.o o/main.o o/fat.o
+LDIN = o/0-link.cfg o/1-ines.o o/main.o o/fat.o
 LDOPT = --dbgfile $@.dbg -Ln $@.lbl -m $@.map
 
-o/ff.nes: $(DEPS) | o # (default)
+o/ff.nes: $(LDIN) | o # (default)
 	$(LD65) $(LDOPT) -o $@ -C $^
-o/%.o: %.s | o
+o/%.o: %.s | o       # code and data.
 	$(COMPILE)
-o/1-%.o: o/0-%.s    # sources extracted from:
+o/1-%.o: o/0-%.s | o # sources extracted from:
 	$(COMPILE)
-o/0-%: Makefile | o # embedded in Makefile.
+o/0-%: Makefile | o  # embedded in Makefile.
 	awk '/^#$(@:o/%=%)/,/^$$/' $< | sed '1d; s/^# //' >$@
-o:                  # outputs directory.
+o:                   # outputs directory.
 	# Try "make help" next for some info.
 	mkdir -p $@
 
-clean:              # remove o.
+clean:               # remove o.
 	$(RM) -r o
-run: o/ff.nes       # via Mesen.
+run: o/ff.nes        # via Mesen.
 	$(MESEN) $< &
-all: o/ff.nes
+all: o/ff.nes # ^
+
+help: # ^
+	@awk '/^##|^[a-z]|\?=/ && !/\^/; /^#:/ {print""}' Makefile ||:
+
+.PHONY: all clean help run
 
 
 # I embed most build boilerplate into Makefile so I'm more
@@ -124,11 +127,3 @@ all: o/ff.nes
 # # ppu:
 #     FONT:     type = ro, load = CH0; # ppu
 # }
-
-#:
-## Info phonies. Not much here yet.
-
-help: # this list.
-	@awk '/^##|^[a-z]|\?=/ && !/\^/; /^#:/ {print""}' Makefile ||:
-
-.PHONY: all clean help run
