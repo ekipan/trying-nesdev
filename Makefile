@@ -62,8 +62,8 @@ help: # ^
 # is probably astronomical. would be curious.
 
 #0-ines.s
-# Mapper =  1 ; $smmm: w/ sub. 0 nrom, 1 mmc1, 218 nesmon's
-# HMirror = 1 ; 0/1: vert/horiz, opposite scroll dir
+# Mapper =  0 ; $smmm: w/ sub. 0 nrom, 1 mmc1, 218 nesmon's
+# Mirror =  0 ; 0/1: horiz/vert, opposite scroll dir
 # PrgRoms = 2 ; $nn:  16k banks at cpu $8000-ffff
 # PrgRams = 1 ; $nn:   8k banks at cpu $6000-7fff, w/ battery
 # ChrRoms = 1 ; $nn: \ 8k banks on ppu bus
@@ -71,7 +71,7 @@ help: # ^
 # Periph =  0 ; $0-4f: 0 none, $23 basic keyboard
 # .segment "INES" ; binfmt: https://www.nesdev.org/wiki/NES_2.0
 #     .byte "NES", $1a, PrgRoms&255, ChrRoms&255 ; 0-5
-#     .byte ((Mapper&$f)<<4) | ((PrgRams>0)<<1) | HMirror ; 6
+#     .byte ((Mapper&$f)<<4) | ((PrgRams>0)<<1) | Mirror ; 6
 #     .byte ((Mapper>>4)&$f) | 8 ; 7 nes hw, nes format 2.0
 #     .byte (Mapper>>8), 0, PrgRams, ChrRams, 0, 0, 0, Periph
 
