@@ -7,32 +7,34 @@
 #:
 ## Makefile variables, you'll need this software:
 
-CA65 ?= ca65 # featureful 6502 assembler, in the cc65 suite
-LD65 ?= ld65 # and its linker
-MESEN ?= Mesen # NES emulator with debugging features
+CA65 ?= ca65 # featureful 6502 assembler, in the cc65 suite.
+LD65 ?= ld65 # and its linker.
+MESEN ?= Mesen # NES emulator with debugging features.
 
 #:
 ## Build targets:
 
-o/ff.nes: link.cfg o/main.o o/fat.o | o
+DEPS ?= link.cfg o/main.o o/fat.o | o
+
+o/ff.nes: $(DEPS) | o # (default)
 	$(LD65) --dbgfile $@.dbg -m $@.m -o $@ -C $^
 
 o/%.o: %.s | o
 	$(CA65) -g -l $@.l -o $@ $<
 
-o:
+o:                  # outputs directory.
 	# Try "make help" next for some info.
 	mkdir -p $@
 
 # Phonies:
 
-clean: # remove o directory.
+clean:              # remove o.
 	$(RM) -r o
 
-all: o/ff.nes
-
-run: o/ff.nes # via Mesen.
+run: o/ff.nes       # via Mesen.
 	$(MESEN) $< &
+
+all: o/ff.nes
 
 #:
 ## Info phonies. Not much here yet.
