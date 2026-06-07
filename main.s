@@ -435,33 +435,3 @@ Irq:    .res 2 ; / to 0 first to update atomically.
     .addr nmi   ; at vblank
     .addr reset ; at power on and reset
     .addr irq   ; unused by default
-
-; nes cartridge configurations vary wildly. emulators support
-; a huge range, but I still need to study the constraints of
-; a feasibly realizable cart (TODO). I'm not very interested
-; in making one but I'd like it to be possible.
-;
-; one scratch prg-ram bank: oam? drawqueue? blockbuffer?
-; the rest to compile user code and dictionary entries into.
-; nes powerdown risks prg-ram corruption via random
-; instructions. fine for scratch.
-;
-; in lieu of studying the tape recorder (TODO), I'd wish for
-; extra prg-ram banks to store user source code and data
-; blocks long term. risk of rogue bank-switch then corruption
-; is probably astronomical. would be curious.
-
-; cart config: https://www.nesdev.org/wiki/Mapper
-Mapper =  1 ; $s0mm: w/ sub. 0 nrom, 1 mmc1, 218 nesmon's
-HMirror = 1 ; 0/1: vert/horiz, opposite scroll dir
-PrgRoms = 2 ; $nn:  16k banks at cpu $8000-ffff
-PrgRams = 1 ; $nn:   8k banks at cpu $6000-7fff, w/ battery
-ChrRoms = 1 ; $nn: \ 8k banks on ppu bus
-ChrRams = 0 ; $nn: / usually one or the other
-Periph =  0 ; $0-4f: 0 none, $23 basic keyboard
-
-.segment "INES" ; binfmt: https://www.nesdev.org/wiki/NES_2.0
-    .byte "NES", $1a, PrgRoms&255, ChrRoms&255 ; 0-5
-    .byte ((Mapper&$f)<<4) | ((PrgRams>0)<<1) | HMirror ; 6
-    .byte ((Mapper>>4)&$f) | 8 ; 7 nes hw, nes format 2.0
-    .byte (Mapper>>8), 0, PrgRams, ChrRams, 0, 0, 0, Periph
