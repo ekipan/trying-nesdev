@@ -239,8 +239,8 @@ NmiW:    .res 3 ; scratch: 2b ptr 1b len.
 
 .segment "ZEROPAGE" ; nmi/main communication:
 NmiFrames:  .res 1 ; counter for synching or delaying.
-NmiDma:     .res 1 ; page to dma from if enabled.
-NmiPalette: .res 1 ; page to copy from, or 0 if unchanged.
+NmiOamPg:   .res 1 ; if sprites enabled.
+NmiPalPg:   .res 1 ; 0 to skip, clears after upload.
 NmiCtrl:    .res 1 ; \ shadow registers, main updates
 NmiMask:    .res 1 ; | will show up next frame so
 NmiScrollX: .res 1 ; | there's a risk of data races.
@@ -271,21 +271,24 @@ nmi: ; 2270c deadline to finish drawing
     _ pla, rti      ; no, leave re-entered nmi
 @default_service:
     _ txa, pha, tya, pha
-    _ inc NmiFrames, inc NmiBusy ; 1 service, n draw commands
-    _ lda NmiCtrl, ora #$80, sta PpuCtrl ; nmi always on!
     ; load sprites:
     _ lda NmiMask, sta PpuMask ; bg/sprites on/off
     _ and #$10, beq :+ ; sprites disabled? -> skip dma
-    _ lda #$00, sta OamAddr  ; \ costs
-    _ lda NmiDma, sta OamDma ; / 521c
+    _ lda #$00, sta OamAddr    ; \ costs
+    _ lda NmiOamPg, sta OamDma ; / 521c
 :   ; load palette:
-    _ lda NmiPalette, beq :++ ; palette unchanged?
-    _ ldy #$00, sta NmiW+1, sty NmiW, sty NmiPalette
+    _ lda NmiPalPg, beq :++ ; palette unchanged?
+    _ ldy #$00, sta NmiW+1, sty NmiW, sty NmiPalPg ; take ptr
+    _ sty PpuCtrl, bit PpuStatus ; horiz mode, clear latch
     _ lda #$3f, sta PpuAddr, sty PpuAddr
 :   lda (NmiW),y ; \ txfer    5c \ 16c * 32 = 512c
     sta PpuData  ; / byte     4c | TODO unroll?
     _ iny, cpy #$20, bne :- ; 7c / +138 bytes -160 cycles
-:   ; interpret draw commands and move tail forward:
+:   ; configure while we still have time:
+    inc NmiFrames ; notify main a vblank happened.
+    inc NmiBusy   ; defensively lock against nmi re-entry.
+    _ lda NmiCtrl, ora #$80, sta PpuCtrl ; nmi always on!
+    ; interpret draw commands and move tail forward:
     _ ldx VTail, jsr @interpret_ring, stx VTail
     bit PpuStatus ; reset latch for:
     ; https://www.nesdev.org/wiki/PPU_scrolling#Frequent_pitfalls
@@ -400,7 +403,7 @@ abort:
     ldx #0          ; empty pstack
 quit:
     _ txa, ldx #$ff, txs, tax  ; empty rstack
-    _ lda #>RomPalette, sta NmiPalette ; default palette
+    _ lda #>RomPalette, sta NmiPalPg ; default palette
     _ lda #$0a, sta NmiMask    ; bg on, sprites off
     _ lda #$f8, sta NmiScrollX ; left edge inside overscan
     _ lda #$00, sta NmiBusy    ; unlock nmi and:
