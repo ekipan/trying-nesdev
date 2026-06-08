@@ -13,30 +13,39 @@ MESEN ?= Mesen ## NES emulator with debugging features.
 #:
 ## Build targets:
 
-COMPILE = $(CA65) $(CART) -g -l $@.lst -o $@ $<
-# CART is defined further below.
 LDIN = o/0-link.cfg o/1-ines.o o/main.o o/fat.o
 LDOPT = --dbgfile $@.dbg -Ln $@.lbl -m $@.map
 
 o/ff.nes: $(LDIN) | o ## (default)
 	$(LD65) $(LDOPT) -o $@ -C $^
-o/%.o: %.s | o       # code and data.
-	$(COMPILE)
-o/1-%.o: o/0-%.s | o # sources extracted from:
-	$(COMPILE)
-o/0-%: Makefile | o  # embedded in Makefile.
+
+ASSEMBLE = $(CA65) $(CART) -g -l $@.lst -o $@ $<
+CART = -D MAPPER=$(MAPPER) -D MIRROR=$(MIRROR) \
+-D PROM=$(PROM) -D PRAM=$(PRAM) -D CROM=$(CROM) \
+-D CRAM=$(CRAM) -D PERIPH=$(PERIPH) # defined below.
+
+o/%.o: %.s | o        # code and data.
+	$(ASSEMBLE)
+
+o/1-%.o: o/0-%.s | o  # sources extracted from:
+	$(ASSEMBLE)
+
+o/0-%: Makefile | o   # embedded in Makefile.
 	awk '/^#$(@:o/%=%)/,/^$$/' $< | sed '1d; s/^# //' >$@
 
 all: o/ff.nes
 
-run: o/ff.nes        ## via Mesen.
+run: o/ff.nes         ## via Mesen.
 	$(MESEN) $< &
-clean:               ## remove:
+
+clean:                ## remove:
 	$(RM) -r o
-o:                   ## outputs directory.
+
+o:                    ## outputs directory.
 	# Try "make help" next for some info.
 	mkdir -p $@
-help:                # list targets.
+
+help:                 # list targets.
 	@awk '/^\S/&&/##/; /^#:/{print""}' Makefile ||:
 
 .PHONY: all clean help run
@@ -60,10 +69,6 @@ help:                # list targets.
 # extra prg-ram banks to store user source code and data
 # blocks long term. risk of rogue bank-switch then corruption
 # is probably astronomical. would be curious.
-
-CART = -D MAPPER=$(MAPPER) -D MIRROR=$(MIRROR) \
--D PROM=$(PROM) -D PRAM=$(PRAM) -D CROM=$(CROM) \
--D CRAM=$(CRAM) -D PERIPH=$(PERIPH)
 
 # https://www.nesdev.org/wiki/Mapper
 MAPPER = 0# $smmm: w/ sub. 0 nrom, 1 mmc1, 218 nesmon's
