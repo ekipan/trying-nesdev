@@ -20,23 +20,23 @@ LDOPT = --dbgfile $@.dbg -Ln $@.lbl -m $@.map
 
 o/ff.nes: $(LDIN) | o ## (default)
 	$(LD65) $(LDOPT) -o $@ -C $^
-o/%.o: %.s | o       ## code and data.
+o/%.o: %.s | o       # code and data.
 	$(COMPILE)
-o/1-%.o: o/0-%.s | o ## sources extracted from:
+o/1-%.o: o/0-%.s | o # sources extracted from:
 	$(COMPILE)
-o/0-%: Makefile | o  ## embedded in Makefile.
+o/0-%: Makefile | o  # embedded in Makefile.
 	awk '/^#$(@:o/%=%)/,/^$$/' $< | sed '1d; s/^# //' >$@
+
+all: o/ff.nes
+
+run: o/ff.nes        ## via Mesen.
+	$(MESEN) $< &
+clean:               ## remove:
+	$(RM) -r o
 o:                   ## outputs directory.
 	# Try "make help" next for some info.
 	mkdir -p $@
-
-clean:               ## remove o.
-	$(RM) -r o
-run: o/ff.nes        ## via Mesen.
-	$(MESEN) $< &
-all: o/ff.nes
-
-help:
+help:                # list targets.
 	@awk '/^\S/&&/##/; /^#:/{print""}' Makefile ||:
 
 .PHONY: all clean help run
