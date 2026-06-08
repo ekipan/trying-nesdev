@@ -274,32 +274,36 @@ nmi: ; 2270c deadline to finish drawing
 :   ; load palette:
     _ lda NmiPalPg, beq :++ ; palette unchanged?
     _ ldy #$00, sta NmiW+1, sty NmiW, sty NmiPalPg ; take ptr
-    _ sty PpuCtrl, bit PpuStatus ; horiz mode, clear latch
-    _ lda #$3f, sta PpuAddr, sty PpuAddr
+    _ sty PpuCtrl, bit PpuStatus ; horiz mode, reset latch
+    _ lda #$3f, sta PpuAddr, sty PpuAddr ; $3f00-3f1f
 :   lda (NmiW),y ; \ txfer    5c \ 16c * 32 = 512c
     sta PpuData  ; / byte     4c | TODO unroll?
     _ iny, cpy #$20, bne :- ; 7c / +138 bytes -160 cycles
 :   ; configure while we still have time:
     inc NmiFrames ; notify main a vblank happened.
     inc NmiBusy   ; defensively lock against nmi re-entry.
-    _ lda NmiCtrl, ora #$80, sta PpuCtrl ; nmi always on!
+    ; nmi always enabled, start drawing in horizontal mode:
+    _ lda NmiCtrl, ora #$80, and #$fb, sta PpuCtrl
     ; interpret draw commands and move tail forward:
     _ ldx VTail, jsr @interpret_ring, stx VTail
-    bit PpuStatus ; reset latch for:
+    ; vblank is possibly blown. construct queues carefully!
+    ; restore main's configured drawing mode, vblank willing:
+    _ lda NmiCtrl, ora #$80, sta PpuCtrl
     ; https://www.nesdev.org/wiki/PPU_scrolling#Frequent_pitfalls
-    _ lda NmiScrollX, sta PpuScroll ; must scroll after
-    _ lda NmiScrollY, sta PpuScroll ; PpuAddr writes
-    ; TODO poll joypad, scan kb?
+    bit PpuStatus ; reset latch for scroll:
+    _ lda NmiScrollX, sta PpuScroll ; shares PpuAddr register,
+    _ lda NmiScrollY, sta PpuScroll ; must set *after* draw.
+    ; TODO poll joypad? scan kb? sound?
     _ lda #0, sta NmiBusy ; unlock next frame
     _ pla, tay, pla, tax, pla, rti
 
 ; entrypoint in the middle for branch range reasons:
 
-@horizontal: ; incrmode bit clear (+1)
-    _ lda #$fb, and NmiCtrl, sta NmiCtrl, sta PpuCtrl
+@horizontal: ; incrmode bit clear (+1), default per frame
+    _ lda NmiCtrl, and #$fb, ora #$80, sta PpuCtrl
     jmp @loop
 @vertical: ; incrmode bit set (+32)
-    _ lda #$04, ora NmiCtrl, sta NmiCtrl, sta PpuCtrl
+    _ lda NmiCtrl, ora #$84, sta PpuCtrl
     jmp @loop
 @immediate: ; (x)y=len val1 val2 val3 ...
 :   inx
@@ -348,7 +352,6 @@ nmi: ; 2270c deadline to finish drawing
 :   lda (NmiW),y
     _ sta PpuData, iny, cpy NmiW+2, bne :-
     beq @inx_and_loop
-    rts ; (unnecessary, for the debugger)
 
 DEF vsync, "VSYNC" ; ( -- ) wait for next vblank.
     lda NmiFrames
