@@ -1,6 +1,7 @@
 
 ; experiments and studies towards a family forth.
 ; just a noninteractive scrolling demo so far (TODO).
+; a goal is to port <https://github.com/ekipan/sss> to it.
 ;
 ; to jump around, grep for:
 ; /code_label:/ /DEF forth_code_label/ /"FORTH-WORD"/
@@ -15,8 +16,8 @@
         _ J,K,L,M,N,O,P
     .endif ; eg: _ pha, txa, pha, tya, pha
 .endmacro  ; eg: _ jsr foo, jsr bar, jmp qux
-; rule: 0/1 loads to start, 0/1 branches to end.
-; *usually* avoid: rts, rti, jmp.
+; rule: loads at start, 0/1 branches at end.
+; *mostly* avoid: rts, rti, jmp.
 
 ; inserted opcodes overlap and skip next instruction:
 .define JMP1 .byte $24 ; bit zp  ; 1 operand byte
@@ -150,11 +151,9 @@ DEF two_times, "2*" ; ( n -- n*2 )
     rol H,x
     rts
 
-lit: ; ( -- n ) fetch through return address.
-    ; TODO lit
-push_ya: ; ( -- y:a )
+push_ya: ; push/put_ya/na/a for assembly literals.
     dex
-put_ya: ; ( ? -- y:a )
+put_ya:
     sty H,x
     sta L,x
     rts
@@ -173,9 +172,9 @@ put_na:
 
 DEF zero, "0" ; ( -- 0 )
     lda #0
-push_a: ; ( -- 0:a )
+push_a:
     dex
-put_a: ; ( ? -- 0:a )
+put_a:
     ldy #0
     sty H,x
     sta L,x
@@ -245,28 +244,29 @@ VEnd =        $85 ; stop drawing until next frame
 ; NMI -------------------------------------------------------
 
 .segment "ZEROPAGE" ; main shouldn't touch these!
-NmiBusy: .res 1 ; reentry and runaway queue guard.
+NmiBusy: .res 1 ; reentry mutex and runaway queue guard.
 NmiW:    .res 3 ; scratch: 2b ptr 1b len.
 
 .segment "ZEROPAGE" ; nmi/main communication:
 NmiFrames:  .res 1 ; counter for synching or delaying.
 NmiOamPg:   .res 1 ; if sprites enabled.
 NmiPalPg:   .res 1 ; 0 to skip, clears after upload.
-NmiCtrl:    .res 1 ; \ shadow registers, main updates
-NmiMask:    .res 1 ; | will show up next frame so
-NmiScrollX: .res 1 ; | there's a risk of data races.
-NmiScrollY: .res 1 ; / avoid intermediates.
+NmiCtrl:    .res 1 ; \ shadow registers.
+NmiMask:    .res 1 ; | updates show up next
+NmiScrollX: .res 1 ; | frame, risk of data
+NmiScrollY: .res 1 ; / races.
 
-DmcFreq =   $4010 ; https://www.nesdev.org/wiki/2A03#-overview
-OamDma =    $4014 ; https://www.nesdev.org/wiki/APU#-bitfields
-Joy1 =      $4016 ; https://www.nesdev.org/wiki/PPU
-Joy2 =      $4017 ; (seems a good place to put these:)
-PpuCtrl =   $2000 ; %n0tbsvyx nmi tall bgpat sprpat vert yxtbl
-PpuMask =   $2001 ; %rgbsbllg dimrgb spr bg leftcol grey
-PpuStatus = $2002 ; %vho00000 vblank? 0hit? overflow?
-OamAddr =   $2003 ; ppu offset to start write, wraps
-PpuScroll = $2005 ; send x then y
-PpuAddr =   $2006 ; latch, then send addrh, addrl
+DmcFreq =   $4010
+OamDma =    $4014
+Joy1 =      $4016
+Joy2 =      $4017
+; https://www.nesdev.org/wiki/PPU_registers
+PpuCtrl =   $2000 ; %n-tbsvyx nmi tall bgpat sprpat vert yxtbl
+PpuMask =   $2001 ; %rgbsbllg dimrgb spr bg leftcol greysc
+PpuStatus = $2002 ; %vho----- vblank 0hit overflow
+OamAddr =   $2003 ; ppu write offset, nonzero corrupts oam!
+PpuScroll = $2005 ; send x then y \ touch PpuStatus
+PpuAddr =   $2006 ; addrh, addrl  / to reset order latch
 PpuData =   $2007 ; increments by 1 or 32 (PpuCtrl vert)
 
 .segment "CODE" ; service a nonmaskable interrupt.
@@ -446,6 +446,8 @@ reset: ; just powered on, turn off all the things:
     ; wait 2 frames for ppu, init ram in the meantime:
     bit PpuStatus
 :   _ bit PpuStatus, bpl :- ; first frame
+    ; banging the PpuStatus vblank bit risks a missed frame.
+    ; needed for reset but runtime will track via NmiFrames.
     lda #0
 :   sta $000,x
     sta $100,x
