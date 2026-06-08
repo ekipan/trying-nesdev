@@ -222,8 +222,8 @@ DEF vcommit, "VCOMMIT" ; ( -- ) send queued draw commands.
 DEF vflush, "VFLUSH" ; ( -- ) wait for draw to finish.
     lda VCommit
     ; TODO degenerate case: malformed queue that defers often
-    ; but overshoots VCommit and never finishes. could add an
-    ; NmiFrames check, or rely on nmi break key (also TODO).
+    ; but overshoots VCommit and never finishes. could add a
+    ; Frames check, or rely on nmi break key (also TODO).
 :   cmp VTail       ; nmi will failsafe on a runaway queue.
     bne :-          ; it might take several frames though.
     rts
@@ -237,18 +237,18 @@ VEnd =        $85 ; stop drawing until next frame
 
 ; NMI -------------------------------------------------------
 
-.segment "ZEROPAGE" ; main shouldn't touch these!
-NmiBusy: .res 1 ; reentry mutex and runaway queue guard.
-NmiW:    .res 3 ; scratch: 2b ptr 1b len.
-
 .segment "ZEROPAGE" ; nmi/main communication:
-NmiFrames:  .res 1 ; counter for synching or delaying.
-NmiOamPg:   .res 1 ; if sprites enabled.
-NmiPalPg:   .res 1 ; 0 to skip, clears after upload.
 NmiCtrl:    .res 1 ; \ shadow registers.
 NmiMask:    .res 1 ; | updates show up next
 NmiScrollX: .res 1 ; | frame, risk of data
 NmiScrollY: .res 1 ; / races.
+NmiW:   .res 3 ; nmi scratch. main doesn't touch!
+Frames: .res 1 ; counter for synching or delaying.
+OamPg:  .res 1 ; if sprites enabled.
+PalPg:  .res 1 ; 0 to skip, clears after upload.
+Mutex:  .res 1 ; nonzero: nmi locked, plus draw tally.
+; a degenerate draw queue eventually tallies to 128+,
+; the draw interpreter abandons, nmi recovers. TODO xref
 
 DmcFreq =   $4010
 OamDma =    $4014
@@ -267,27 +267,27 @@ PpuData =   $2007 ; increments by 1 or 32 (PpuCtrl vert)
 nmi: ; 2270c deadline to finish drawing
     _ bit Custom, bpl :+ ; default nmi service?
     jmp (Nmi) ; no, custom
-:   _ pha, lda NmiBusy, bne :+ ; locked? -> leave re-entry.
+:   _ pha, lda Mutex, bne :+ ; locked? -> leave re-entry.
     _ txa, pha, tya, pha
-    inc NmiBusy   ; lock against nmi re-entry.
-    inc NmiFrames ; notify main a vblank happened.
-    jsr draw
+    ; lock, notify main a vblank happened, process queue:
+    _ inc Mutex, inc Frames, jsr draw
     ; TODO poll joypad? scan kb? sound?
-    _ lda #0, sta NmiBusy ; unlock next frame
+    _ lda #0, sta Mutex ; unlock next frame
     _ pla, tay, pla, tax
 :   _ pla, rti
 
-draw:
+draw: ; ~2240c left after nmi prologue
+    ; TODO store 1 to Mutex on entry/exit
     ; reset PpuAddr/PpuScroll write latch only once(!):
     bit PpuStatus ; risky! a bug below will break drawing.
     ; load sprites:
     _ lda NmiMask, sta PpuMask ; bg/sprites on/off
     _ and #$10, beq :+ ; sprites disabled? -> skip dma
-    _ lda #$00, sta OamAddr    ; \ costs
-    _ lda NmiOamPg, sta OamDma ; / 521c
+    _ lda #$00, sta OamAddr ; \ costs
+    _ lda OamPg, sta OamDma ; / 521c
 :   ; load palette:
-    _ lda NmiPalPg, beq :++ ; palette unchanged?
-    _ ldy #$00, sta NmiW+1, sty NmiW, sty NmiPalPg ; take ptr
+    _ lda PalPg, beq :++ ; palette unchanged?
+    _ ldy #$00, sta NmiW+1, sty NmiW, sty PalPg ; take ptr
     _ sty PpuCtrl ; horizontal mode
     _ lda #$3f, sta PpuAddr, sty PpuAddr ; $3f00-3f1f
 :   lda (NmiW),y ; \ txfer    5c \ 16c * 32 = 512c
@@ -329,7 +329,7 @@ draw:
   @inx_and_loop:
     inx
   @loop:
-    inc NmiBusy     ; reuse nmi lock to tally finished commands
+    inc Mutex       ; reuse nmi lock to tally finished commands
     bmi @abandon    ; >127? probably a runaway queue
   @begin: ; x = cursor into page-aligned ring buffer <- ENTRY
     _ cpx VCommit, beq @rts ; no work left to do?
@@ -363,14 +363,14 @@ draw:
     _ sta PpuData, iny, cpy NmiW+2, bne :-
     beq @inx_and_loop
 @end: ; of frame: defer to next nmi if we've drawn
-    _ lda NmiBusy, cmp #$02, bcc @begin ; none yet?
-    rts ; NmiBusy 0: free, 1: locked but no draws yet.
+    _ lda Mutex, cmp #$02, bcc @begin ; no draws yet?
+    rts ; Mutex 0: free, 1: locked but no draws.
 
 DEF voff, "VOFF" ; ( -- ) to draw directly.
     _ lda NmiMask, and #$e7, sta NmiMask ; render off
 DEF vsync, "VSYNC" ; ( -- ) wait for next vblank.
-    lda NmiFrames
-:   _ cmp NmiFrames, beq :-
+    lda Frames
+:   _ cmp Frames, beq :-
     rts
 
 ; terminal primitives:
@@ -384,21 +384,21 @@ DEF page, "PAGE" ; ( -- ) init and clear the screen.
     ; called on reset, must enable nmi directly! [^1]
     ; synchronous, ~0.6f.
     ; attempt to recover bad queue/mutex, very racey:
-    _ lda #$00, sta NmiBusy ; unlock nmi (paranoid)
     _ lda VCommit, sta VTail, sta VHead ; delete the queue
+    _ lda #$00, sta Mutex ; unlock nmi (paranoid)
     _ lda #$80, ora NmiCtrl, sta PpuCtrl ; [^1] enable nmi
     jsr voff
     _ lda #$00, sta CsrRow, sta CsrCol
     sta NmiScrollY ; TODO compute from row
     _ lda #$f8, sta NmiScrollX ; left edge inside overscan
-    _ lda #>RomPalette, sta NmiPalPg ; default palette
-    _ txa, pha ; save pstack
+    _ lda #>RomPalette, sta PalPg ; default palette
+    _ stx W ; save pstack
     _ ldy #$24, lda #$00, bit PpuStatus, sty PpuAddr, sta PpuAddr
     _ ldy #$08, ldx #$00 ;lda #$00
 :   stx PpuData ; TODO test pattern: stx, clear: sta
     _ inx, bne :- ; 256 bytes
     _ dey, bne :- ; 8 pages = nametables 1+2 $2400-2bff [^2]
-    _ pla, tax ; restore pstack
+    _ ldx W ; restore pstack
     _ lda #$0a, sta NmiMask ; bg on, sprites off
     rts
 
@@ -449,7 +449,7 @@ reset: ; just powered on, turn off all the things:
     bit PpuStatus
 :   _ bit PpuStatus, bpl :- ; first frame
     ; banging the PpuStatus vblank bit risks a missed frame.
-    ; needed for reset but runtime will track via NmiFrames.
+    ; needed for reset but runtime will track via Frames.
     lda #0
 :   sta $000,x
     sta $100,x
