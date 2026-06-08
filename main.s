@@ -9,10 +9,10 @@
 ; MACROS ----------------------------------------------------
 
 ; time for a bad first impression! code *should* be dense:
-.macro _ I,J,K,L,M,N ; list of instructions.
-    .if .not .blank({I}) ; up to 6:
+.macro _ I,J,K,L,M,N,O,P ; list of instructions.
+    .if .not .blank({I}) ; up to 8:
         I
-        _ J,K,L,M,N
+        _ J,K,L,M,N,O,P
     .endif ; eg: _ pha, txa, pha, tya, pha
 .endmacro  ; eg: _ jsr foo, jsr bar, jmp qux
 ; rule: 0/1 loads to start, 0/1 branches to end.
@@ -163,9 +163,9 @@ put_ya: ; ( ? -- y:a )
 
 DEF neg_one, "-1" ; ( -- -1 )
     lda #$ff
-push_neg_a:
+push_na:
     dex
-put_neg_a:
+put_na:
     ldy #$ff
     sty H,x
     sta L,x
@@ -179,6 +179,17 @@ put_a: ; ( ? -- 0:a )
     ldy #0
     sty H,x
     sta L,x
+    rts
+
+DEF plus, "+" ; ( n1 n0 -- n1+n0 ) addition.
+    clc
+    lda L+0,x
+    adc L+1,x
+    sta L+1,x
+    lda H+0,x
+    adc H+1,x
+    sta H+1,x
+    inx
     rts
 
 ; DRAW COMMANDS QUEUE ---------------------------------------
@@ -201,11 +212,11 @@ VTail:   .res 1 ; 3) nmi interprets and moves fwd.
 .segment "CODE"
 DEF to_v, ">V" ; ( addr -- ) append address to queue.
     Lda H,x         ; queue expects big-endian!
-    jsr v_a
+    jsr a_to_v
 DEF c_to_v, "C>V" ; ( c -- ) append byte to queue.
     lda L,x
     inx
-v_a:
+a_to_v:
     ldy VHead
     sta VCmds,y
     iny             ; full page buffer, expects wraparound.
@@ -300,7 +311,7 @@ nmi: ; 2270c deadline to finish drawing
 ; entrypoint in the middle for branch range reasons:
 
 @horizontal: ; incrmode bit clear (+1), default per frame
-    _ lda NmiCtrl, and #$fb, ora #$80, sta PpuCtrl
+    _ lda NmiCtrl, ora #$80, and #$fb, sta PpuCtrl
     jmp @loop
 @vertical: ; incrmode bit set (+32)
     _ lda NmiCtrl, ora #$84, sta PpuCtrl
@@ -353,10 +364,70 @@ nmi: ; 2270c deadline to finish drawing
     _ sta PpuData, iny, cpy NmiW+2, bne :-
     beq @inx_and_loop
 
+DEF voff, "VOFF" ; ( -- ) to draw directly.
+    _ lda NmiMask, and #$e7, sta NmiMask ; render off
 DEF vsync, "VSYNC" ; ( -- ) wait for next vblank.
     lda NmiFrames
 :   _ cmp NmiFrames, beq :-
     rts
+
+; terminal primitives:
+
+.segment "ZEROPAGE"
+CsrRow: .res 1
+CsrCol: .res 1
+
+.segment "CODE"
+DEF page, "PAGE" ; ( -- ) init and clear the screen.
+    ; called on reset, must enable nmi directly! [^1]
+    ; synchronous, ~0.6f.
+    ; attempt to recover bad queue/mutex, very racey:
+    _ lda #$00, sta NmiBusy ; unlock nmi (paranoid)
+    _ lda VCommit, sta VTail, sta VHead ; delete the queue
+    _ lda #$80, ora NmiCtrl, sta PpuCtrl ; [^1] enable nmi
+    jsr voff
+    _ lda #$00, sta CsrRow, sta CsrCol
+    sta NmiScrollY ; TODO compute from row
+    _ lda #$f8, sta NmiScrollX ; left edge inside overscan
+    _ lda #>RomPalette, sta NmiPalPg ; default palette
+    _ txa, pha ; save pstack
+    _ ldy #$24, lda #$00, bit PpuStatus, sty PpuAddr, sta PpuAddr
+    _ ldy #$08, ldx #$00 ;lda #$00
+:   stx PpuData ; TODO test pattern: stx, clear: sta
+    _ inx, bne :- ; 256 bytes
+    _ dey, bne :- ; 8 pages = nametables 1+2 $2400-2bff [^2]
+    _ pla, tax ; restore pstack
+    _ lda #$0a, sta NmiMask ; bg on, sprites off
+    rts
+
+;  nw ntb0 -> [ $2000-23ff ][ $2400-27ff ] <- ne ntb1  \ 1k
+;  sw ntb2 -> [ $2800-2bff ][ $2c00-2fff ] <- se ntb3  / each
+;
+; [^2] most carts map nametables 0-3 to the ppu internal 2k,
+; mirroring either horizontally or vertically. ntb1 and 2 are
+; continguous in memory and pair with both configurations.
+
+DEF cr, "CR" ; ( -- ) move the cursor to the start of next line.
+    _ lda #VEnd, jsr a_to_v ; flush pending draws.
+    _ lda #$00, sta CsrCol ; col = 0, increment row:
+    _ ldy CsrRow, jsr @iny, sty CsrRow, jsr @clear ; and clear.
+    _ ldy CsrRow, jsr @iny, jsr @clear ; and below screen.
+    ; TODO scroll.
+    jmp vcommit
+@iny:
+    _ iny, tya, and #31, cmp #30, bcc :+ ; still in-screen?
+    _ iny, iny ; pass over attrtable seam.
+:   rts
+@clear: ; TODO extract cursor compute from this for 'page'
+    _ lda #$00, sta W ; compute: $2400 + (y & 63) << 5
+    _ tya, asl, asl, asl, rol W
+    _ asl, rol W, asl, rol W
+    _ ldy W, jsr push_ya ; ( offset )
+    _ ldy #$24, lda #$00, jsr push_ya, ; ( offset base )
+    _ jsr plus, jsr to_v     ; at row address:
+    _ lda #VFill, jsr a_to_v ; fill
+    _ lda #32, jsr a_to_v    ; an entire row
+    _ lda #' ', jmp a_to_v   ; with spaces
 
 .segment "RODATA"
 RomPalette:
@@ -387,29 +458,15 @@ reset: ; just powered on, turn off all the things:
     _ inx, bne :-
 :   _ bit PpuStatus, bpl :- ; second frame
     ; TODO init banks? keyboard? tty?
-    ; clear background:
-    _ ldy #$20, lda #$00
-    _ bit PpuStatus, sty PpuAddr, sta PpuAddr
-    ldy #$10        ; all 4 nametables, for any mapper
-:   stx PpuData     ; TODO sta ' ', stx 'abc', sty page
-    _ inx, bne :-
-    _ dey, bne :-
-abort:
-    ldx #0          ; empty pstack
-quit:
-    _ txa, ldx #$ff, txs, tax  ; empty rstack
-    _ lda #>RomPalette, sta NmiPalPg ; default palette
-    _ lda #$0a, sta NmiMask    ; bg on, sprites off
-    _ lda #$f8, sta NmiScrollX ; left edge inside overscan
-    _ lda #$00, sta NmiBusy    ; unlock nmi and:
-    _ lda #$80, sta NmiCtrl, sta PpuCtrl ; enable
-main: ; ready to go.
-    jsr vsync       ; wait one frame
+    _ ldx #$ff, txs, inx ; clear both forth stacks
+    jsr page        ; clear background and start nmi.
+main:
     lda #1 ; pixel
-    jsr @add_y
+    jsr add_y
+    jsr vsync       ; wait one frame
     jmp main
 
-@add_y: ; y += a, up to 15 pixels, adjusting for seam
+add_y: ; y += a, [-16..16] for correct seam jump.
     clc
     adc NmiScrollY
     tay
