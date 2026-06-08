@@ -340,7 +340,7 @@ nmi: ; 2270c deadline to finish drawing
     _ cmp #$40, bcc @set_addr ; $0-3f, valid ppu page?
     _ cmp #VImmediate, beq @immediate ; workhorse draw
     _ cmp #VFill, beq @fill         ; clearing/blocking out
-    _ cmp #VEnd, beq @rts           ; frame pacing
+    _ cmp #VEnd, beq @end           ; frame pacing
     _ cmp #VTransfer, beq @transfer ; usually during setup
     _ cmp #VVertical, beq @vertical ; switch to columns
     _ cmp #VHorizontal, beq @horizontal ; back to default
@@ -366,6 +366,9 @@ nmi: ; 2270c deadline to finish drawing
 :   lda (NmiW),y
     _ sta PpuData, iny, cpy NmiW+2, bne :-
     beq @inx_and_loop
+@end: ; of frame: defer to next nmi if we've drawn
+    _ lda NmiBusy, cmp #$01, beq @interpret_ring ; none yet?
+    rts ; NmiBusy was inc'd to 1 earlier as a safety lock.
 
 DEF voff, "VOFF" ; ( -- ) to draw directly.
     _ lda NmiMask, and #$e7, sta NmiMask ; render off
