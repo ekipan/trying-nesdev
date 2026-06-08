@@ -271,13 +271,13 @@ nmi: ; 2270c deadline to finish drawing
     _ txa, pha, tya, pha
     inc NmiBusy   ; lock against nmi re-entry.
     inc NmiFrames ; notify main a vblank happened.
-    jsr @draw
+    jsr draw
     ; TODO poll joypad? scan kb? sound?
     _ lda #0, sta NmiBusy ; unlock next frame
     _ pla, tay, pla, tax
 :   _ pla, rti
 
-@draw:
+draw:
     ; reset PpuAddr/PpuScroll write latch only once(!):
     bit PpuStatus ; risky! a bug below will break drawing.
     ; load sprites:
@@ -329,7 +329,7 @@ nmi: ; 2270c deadline to finish drawing
   @inx_and_loop:
     inx
   @loop:
-    inc NmiBusy     ; tally one command finished
+    inc NmiBusy     ; reuse nmi lock to tally finished commands
     bmi @abandon    ; >127? probably a runaway queue
   @begin: ; x = cursor into page-aligned ring buffer <- ENTRY
     _ cpx VCommit, beq @rts ; no work left to do?
@@ -363,8 +363,8 @@ nmi: ; 2270c deadline to finish drawing
     _ sta PpuData, iny, cpy NmiW+2, bne :-
     beq @inx_and_loop
 @end: ; of frame: defer to next nmi if we've drawn
-    _ lda NmiBusy, cmp #$01, beq @begin ; none yet?
-    rts ; NmiBusy was inc'd to 1 earlier as a safety lock.
+    _ lda NmiBusy, cmp #$02, bcc @begin ; none yet?
+    rts ; NmiBusy 0: free, 1: locked but no draws yet.
 
 DEF voff, "VOFF" ; ( -- ) to draw directly.
     _ lda NmiMask, and #$e7, sta NmiMask ; render off
