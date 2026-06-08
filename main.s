@@ -266,11 +266,18 @@ PpuData =   $2007 ; increments by 1 or 32 (PpuCtrl vert)
 .segment "CODE" ; service a nonmaskable interrupt.
 nmi: ; 2270c deadline to finish drawing
     _ bit Custom, bpl :+ ; default nmi service?
-    jmp (Nmi)       ; no, custom
-:   _ pha, lda NmiBusy, beq @default_service ; unlocked?
-    _ pla, rti      ; no, leave re-entered nmi
-@default_service:
+    jmp (Nmi) ; no, custom
+:   _ pha, lda NmiBusy, bne :+ ; locked? -> leave re-entry.
     _ txa, pha, tya, pha
+    inc NmiBusy   ; lock against nmi re-entry.
+    inc NmiFrames ; notify main a vblank happened.
+    jsr @draw
+    ; TODO poll joypad? scan kb? sound?
+    _ lda #0, sta NmiBusy ; unlock next frame
+    _ pla, tay, pla, tax
+:   _ pla, rti
+
+@draw:
     ; reset PpuAddr/PpuScroll write latch only once(!):
     bit PpuStatus ; risky! a bug below will break drawing.
     ; load sprites:
@@ -286,22 +293,17 @@ nmi: ; 2270c deadline to finish drawing
 :   lda (NmiW),y ; \ txfer    5c \ 16c * 32 = 512c
     sta PpuData  ; / byte     4c | TODO unroll?
     _ iny, cpy #$20, bne :- ; 7c / +138 bytes -160 cycles
-:   ; configure while we still have time:
-    inc NmiFrames ; notify main a vblank happened.
-    inc NmiBusy   ; defensively lock against nmi re-entry.
-    ; nmi always enabled, start drawing in horizontal mode:
+:   ; nmi always enabled, start drawing in horizontal mode:
     _ lda NmiCtrl, ora #$80, and #$fb, sta PpuCtrl
-    ; interpret draw commands and move tail forward:
-    _ ldx VTail, jsr @interpret_ring, stx VTail
+    ; interpret draw commands, move tail forward:
+    _ ldx VTail, jsr @begin, stx VTail
     ; vblank is possibly blown. construct queues carefully!
     ; restore main's configured drawing mode, vblank willing:
     _ lda NmiCtrl, ora #$80, sta PpuCtrl
     ; https://www.nesdev.org/wiki/PPU_scrolling#Frequent_pitfalls
     _ lda NmiScrollX, sta PpuScroll ; shares PpuAddr register,
     _ lda NmiScrollY, sta PpuScroll ; must set *after* draw.
-    ; TODO poll joypad? scan kb? sound?
-    _ lda #0, sta NmiBusy ; unlock next frame
-    _ pla, tay, pla, tax, pla, rti
+    rts
 
 ; entrypoint in the middle for branch range reasons:
 
@@ -316,6 +318,11 @@ nmi: ; 2270c deadline to finish drawing
     lda VCmds,x     ; val#
     _ sta PpuData, dey, bne :-
     beq @inx_and_loop
+@fill: ; (x)y=len val
+    inx
+    lda VCmds,x     ; val
+:   _ sta PpuData, dey, bne :-
+    beq @inx_and_loop
 ; most common command, to fallthru into @loop:
 @set_addr: ; a=$hh (x)y=$ll
     _ sta PpuAddr, sty PpuAddr ; unlatched(!) to save 4c
@@ -324,14 +331,14 @@ nmi: ; 2270c deadline to finish drawing
   @loop:
     inc NmiBusy     ; tally one command finished
     bmi @abandon    ; >127? probably a runaway queue
-  @interpret_ring: ; x = cursor into page-aligned ring buffer
+  @begin: ; x = cursor into page-aligned ring buffer <- ENTRY
     _ cpx VCommit, beq @rts ; no work left to do?
     ; command bytes:  (x)opcode (arg1 arg2 ...)
     lda VCmds,x     ; (x)a=opcode (arg1 ...)
     inx             ; a=opcode (x)(arg1 ...)
     ldy VCmds,x     ; a=opcode (x)y=(arg1) (...)
     ; in order of likeliness, to squeeze cycles:
-    _ cmp #$40, bcc @set_addr ; $0-3f, valid ppu page?
+    _ cmp #$40, bcc @set_addr       ; $0-3f, valid ppu page?
     _ cmp #VImmediate, beq @immediate ; workhorse draw
     _ cmp #VFill, beq @fill         ; clearing/blocking out
     _ cmp #VEnd, beq @end           ; frame pacing
@@ -343,11 +350,6 @@ nmi: ; 2270c deadline to finish drawing
     ldx VCommit
   @rts:
     rts
-@fill: ; (x)y=len val
-    inx
-    lda VCmds,x     ; val
-:   _ sta PpuData, dey, bne :-
-    beq @inx_and_loop
 @transfer: ; (x)y=len $hh $ll
     sty NmiW+2      ; len
     inx
@@ -361,7 +363,7 @@ nmi: ; 2270c deadline to finish drawing
     _ sta PpuData, iny, cpy NmiW+2, bne :-
     beq @inx_and_loop
 @end: ; of frame: defer to next nmi if we've drawn
-    _ lda NmiBusy, cmp #$01, beq @interpret_ring ; none yet?
+    _ lda NmiBusy, cmp #$01, beq @begin ; none yet?
     rts ; NmiBusy was inc'd to 1 earlier as a safety lock.
 
 DEF voff, "VOFF" ; ( -- ) to draw directly.
