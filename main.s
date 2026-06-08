@@ -336,14 +336,16 @@ nmi: ; 2270c deadline to finish drawing
     lda VCmds,x     ; (x)a=opcode (arg1 ...)
     inx             ; a=opcode (x)(arg1 ...)
     ldy VCmds,x     ; a=opcode (x)y=(arg1) (...)
+    ; in order of likeliness, to squeeze cycles:
     _ cmp #$40, bcc @set_addr ; $0-3f, valid ppu page?
-    _ cmp #VTransfer, beq @transfer
-    _ cmp #VFill, beq @fill
-    _ cmp #VImmediate, beq @immediate
-    _ cmp #VHorizontal, beq @horizontal
-    _ cmp #VVertical, beq @vertical
-    _ cmp #VEnd, beq @rts ; end frame: defer to next nmi
-  @abandon: ; malformed command (or runaway queue).
+    _ cmp #VImmediate, beq @immediate ; workhorse draw
+    _ cmp #VFill, beq @fill         ; clearing/blocking out
+    _ cmp #VEnd, beq @rts           ; frame pacing
+    _ cmp #VTransfer, beq @transfer ; usually during setup
+    _ cmp #VVertical, beq @vertical ; switch to columns
+    _ cmp #VHorizontal, beq @horizontal ; back to default
+    ; malformed command.
+  @abandon:
     ldx VCommit
   @rts:
     rts
