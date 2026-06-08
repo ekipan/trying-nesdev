@@ -277,6 +277,8 @@ nmi: ; 2270c deadline to finish drawing
     _ pla, rti      ; no, leave re-entered nmi
 @default_service:
     _ txa, pha, tya, pha
+    ; reset PpuAddr/PpuScroll write latch only once(!):
+    bit PpuStatus ; risky! a bug below will break drawing.
     ; load sprites:
     _ lda NmiMask, sta PpuMask ; bg/sprites on/off
     _ and #$10, beq :+ ; sprites disabled? -> skip dma
@@ -285,7 +287,7 @@ nmi: ; 2270c deadline to finish drawing
 :   ; load palette:
     _ lda NmiPalPg, beq :++ ; palette unchanged?
     _ ldy #$00, sta NmiW+1, sty NmiW, sty NmiPalPg ; take ptr
-    _ sty PpuCtrl, bit PpuStatus ; horiz mode, reset latch
+    _ sty PpuCtrl ; horizontal mode
     _ lda #$3f, sta PpuAddr, sty PpuAddr ; $3f00-3f1f
 :   lda (NmiW),y ; \ txfer    5c \ 16c * 32 = 512c
     sta PpuData  ; / byte     4c | TODO unroll?
@@ -301,7 +303,6 @@ nmi: ; 2270c deadline to finish drawing
     ; restore main's configured drawing mode, vblank willing:
     _ lda NmiCtrl, ora #$80, sta PpuCtrl
     ; https://www.nesdev.org/wiki/PPU_scrolling#Frequent_pitfalls
-    bit PpuStatus ; reset latch for scroll:
     _ lda NmiScrollX, sta PpuScroll ; shares PpuAddr register,
     _ lda NmiScrollY, sta PpuScroll ; must set *after* draw.
     ; TODO poll joypad? scan kb? sound?
@@ -323,7 +324,7 @@ nmi: ; 2270c deadline to finish drawing
     beq @inx_and_loop
 ; most common command, to fallthru into @loop:
 @set_addr: ; a=$hh (x)y=$ll
-    _ bit PpuStatus, sta PpuAddr, sty PpuAddr
+    _ sta PpuAddr, sty PpuAddr ; unlatched(!) to save 4c
   @inx_and_loop:
     inx
   @loop:
