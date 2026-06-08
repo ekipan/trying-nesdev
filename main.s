@@ -17,7 +17,6 @@
     .endif ; eg: _ pha, txa, pha, tya, pha
 .endmacro  ; eg: _ jsr foo, jsr bar, jmp qux
 ; rule: loads at start, 0/1 branches at end.
-; *mostly* avoid: rts, rti, jmp.
 
 ; inserted opcodes overlap and skip next instruction:
 .define JMP1 .byte $24 ; bit zp  ; 1 operand byte
@@ -33,8 +32,8 @@
     .segment "DICT" ; a nametoken (nt) is an entry address:
         .addr XT    ; execution token is a code address
         .byte (FLAGS+0) | .strlen(NAME), NAME ; blank needs +0
-    .popseg ; back to original segment:
-    XT:     ; where the code will follow.
+    .popseg ; code follows back in original segment:
+    XT:
 .endmacro ; eg: foo: DEF "FOO" ; ( a -- b ) does foo.
 ; xt field first makes an nt a direct xt pointer: >XT = @
 
@@ -45,22 +44,17 @@
 ; Length =    $1f ; mask: up to 31 character names
 
 .macro CONSTANT LABEL_EQ, VALUE ; push value to pstack.
-    lda #<VALUE
-    ldy #>VALUE
-    jmp push_ya
+    _ lda #<VALUE, ldy #>VALUE, jmp push_ya
     LABEL_EQ VALUE
 .endmacro ; eg: ; DEF foo, "FOO" ; CONSTANT Foo =, 123
 ; integrated "=" is weird but greppable. TODO optimize byte?
 
 .macro CVALUE ADDR ; fetch unsigned byte value from ram.
-    lda abs:ADDR
-    jmp push_a
+    _ lda abs:ADDR, jmp push_a
 .endmacro ; wasted abs byte for runtime to store through.
 
 .macro VALUE ADDR ; fetch cell value from ram.
-    ldy abs:ADDR+1
-    lda ADDR
-    jmp push_ya
+    _ ldy abs:ADDR+1, lda ADDR, jmp push_ya
 .endmacro ; runtime can detect size by first opcode.
 
 ; CORE ------------------------------------------------------

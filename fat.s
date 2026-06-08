@@ -9,7 +9,7 @@
 
 .macro FILL N
     .repeat N
-        GLYPH 0,0,0,$38,0,0,0,0 ; 3 dots in the middle.
+        GLYPH 0,0,0,$38,0,0,0,0
     .endrepeat
 .endmacro
 
