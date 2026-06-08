@@ -13,7 +13,8 @@ MESEN ?= Mesen # NES emulator with debugging features.
 #:
 ## Build targets:
 
-COMPILE = $(CA65) -g -l $@.lst -o $@ $<
+COMPILE = $(CA65) $(CART) -g -l $@.lst -o $@ $<
+# CART is defined further below.
 LDIN = o/0-link.cfg o/1-ines.o o/main.o o/fat.o
 LDOPT = --dbgfile $@.dbg -Ln $@.lbl -m $@.map
 
@@ -42,8 +43,7 @@ help: # ^
 
 
 # I embed most build boilerplate into Makefile so I'm more
-# likely to keep it up to date. probably makes it more
-# difficult to configure though.
+# likely to keep it up to date.
 
 
 # nes cartridge configurations vary wildly. emulators support
@@ -61,27 +61,35 @@ help: # ^
 # blocks long term. risk of rogue bank-switch then corruption
 # is probably astronomical. would be curious.
 
-#0-ines.s
-# Mapper =  0 ; $smmm: w/ sub. 0 nrom, 1 mmc1, 218 nesmon's
-# Mirror =  0 ; 0/1: horiz/vert, opposite scroll dir
-# PrgRoms = 2 ; $nn:  16k banks at cpu $8000-ffff
-# PrgRams = 1 ; $nn:   8k banks at cpu $6000-7fff, w/ battery
-# ChrRoms = 1 ; $nn: \ 8k banks on ppu bus
-# ChrRams = 0 ; $nn: / usually one or the other
-# Periph =  0 ; $0-4f: 0 none, $23 basic keyboard
-# .segment "INES" ; binfmt: https://www.nesdev.org/wiki/NES_2.0
-#     .byte "NES", $1a, PrgRoms&255, ChrRoms&255 ; 0-5
-#     .byte ((Mapper&$f)<<4) | ((PrgRams>0)<<1) | Mirror ; 6
-#     .byte ((Mapper>>4)&$f) | 8 ; 7 nes hw, nes format 2.0
-#     .byte (Mapper>>8), 0, PrgRams, ChrRams, 0, 0, 0, Periph
+CART = -D MAPPER=$(MAPPER) -D MIRROR=$(MIRROR) \
+-D PROM=$(PROM) -D PRAM=$(PRAM) -D CROM=$(CROM) \
+-D CRAM=$(CRAM) -D PERIPH=$(PERIPH)
+
+# https://www.nesdev.org/wiki/Mapper
+MAPPER = 0# $smmm: w/ sub. 0 nrom, 1 mmc1, 218 nesmon's
+MIRROR = 0# 0/1: horiz/vert, opposite scroll dir
+PROM   = 2# $nnn:  16k banks at cpu $8000-bfff, $c000-ffff
+PRAM   = 1# $nn:    8k banks at cpu $6000-7fff, w/ battery
+CROM   = 1# $nnn: \ 8k banks on ppu bus
+CRAM   = 0# $nn:  / usually one or the other
+PERIPH = 0# $0-4f: 0 none, $23 basic keyboard
+
+#0-ines.s - https://www.nesdev.org/wiki/NES_2.0
+# .segment "INES"
+#     .byte "NES", $1a, PROM&255, CROM&255 ; 0-5
+#     .byte ((MAPPER&$f)<<4) | ((PRAM>0)<<1) | MIRROR ; 6
+#     .byte ((MAPPER>>4)&$f) | 8 ; 7: hw nes, binfmt nes2.0
+#     .byte (MAPPER>>8), ((PROM>>4)&$f0)|(CROM>>8)&$f ; 8-9
+#     .byte PRAM, CRAM, 0, 0, 0, PERIPH ; 10-15
+#     ; TODO fix bytes 10 and 11
 
 
 # a linker script decides where to put the bytes in the binary
 # file and resolves pointers between and within segments.
 #
 # MEMORY: the nes has two address busses: cpu and ppu (video).
-# a cart's address-line-to-ram/rom chip configuration is
-# called a mapper:  https://www.nesdev.org/wiki/Mapper
+# a cart's address-line-to-ram/rom-chip configuration is
+# called a mapper:
 # for now, simple 1-to-1 address-to-rom mapping.
 #
 # P1: the 6502 cpu owns ram page 1 for the hardware stack.
