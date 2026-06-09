@@ -376,8 +376,11 @@ DEF vsync, "VSYNC" ; ( -- ) wait for next vblank.
 ; terminal primitives:
 
 .segment "ZEROPAGE"
-CsrRow: .res 1
-CsrCol: .res 1
+CsrCol: .res 1 ; 0-31, width of screen.
+CsrRow: .res 1 ; 0-253, except seam rows 30,31,62,63 etc
+; vaddr calc drops CsrRow.6-7, so effectively 0-29,32-61.
+; last two columns are in overscan caution zone.
+; https://www.nesdev.org/wiki/Overscan
 
 .segment "CODE"
 DEF page, "PAGE" ; ( -- ) init and clear the screen.
