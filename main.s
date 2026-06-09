@@ -375,12 +375,26 @@ DEF vsync, "VSYNC" ; ( -- ) wait for next vblank.
 
 ; terminal primitives:
 
+.segment "RODATA"
+RomPalette:
+    .align 256
+    .repeat 8
+        .byte $0F, $29, $17, $20
+    .endrepeat
+
 .segment "ZEROPAGE"
 CsrCol: .res 1 ; 0-31, width of screen.
 CsrRow: .res 1 ; 0-253, except seam rows 30,31,62,63 etc
 ; vaddr calc drops CsrRow.6-7, so effectively 0-29,32-61.
 ; last two columns are in overscan caution zone.
 ; https://www.nesdev.org/wiki/Overscan
+
+; nw ntb0 -> [ $2000-23ff ][ $2400-27ff ] <- ne ntb1  \ 1k
+; sw ntb2 -> [ $2800-2bff ][ $2c00-2fff ] <- se ntb3  / each
+;
+; [^2] most carts map nametables 0-3 to the ppu internal 2k,
+; mirroring either horizontally or vertically. ntb1 and 2 are
+; contiguous in memory and pair with both configurations.
 
 .segment "CODE"
 DEF page, "PAGE" ; ( -- ) init and clear the screen.
@@ -405,13 +419,6 @@ DEF page, "PAGE" ; ( -- ) init and clear the screen.
     _ lda #$0a, sta NmiMask ; bg on, sprites off
     rts
 
-;  nw ntb0 -> [ $2000-23ff ][ $2400-27ff ] <- ne ntb1  \ 1k
-;  sw ntb2 -> [ $2800-2bff ][ $2c00-2fff ] <- se ntb3  / each
-;
-; [^2] most carts map nametables 0-3 to the ppu internal 2k,
-; mirroring either horizontally or vertically. ntb1 and 2 are
-; continguous in memory and pair with both configurations.
-
 DEF cr, "CR" ; ( -- ) move the cursor to the start of next line.
     _ lda #VEnd, jsr a_to_v ; flush pending draws.
     _ lda #$00, sta CsrCol ; col = 0, increment row:
@@ -433,13 +440,6 @@ DEF cr, "CR" ; ( -- ) move the cursor to the start of next line.
     _ lda #VFill, jsr a_to_v ; fill
     _ lda #32, jsr a_to_v    ; an entire row
     _ lda #' ', jmp a_to_v   ; with spaces
-
-.segment "RODATA"
-RomPalette:
-    .align 256
-    .repeat 8
-        .byte $0F, $29, $17, $20
-    .endrepeat
 
 ; RESET, MAIN -----------------------------------------------
 
@@ -502,3 +502,12 @@ Irq:    .res 2 ; / to 0 first to update atomically.
     .addr nmi   ; at vblank
     .addr reset ; at power on and reset
     .addr irq   ; unused by default
+
+; see Makefile for cart configuration defines.
+.segment "INES" ; https://www.nesdev.org/wiki/NES_2.0
+    .byte "NES", $1a, PROM&255, CROM&255 ; 0-5
+    .byte ((MAPPER&$f)<<4) | ((PRAM>0)<<1) | MIRROR ; 6
+    .byte ((MAPPER>>4)&$f) | 8 ; 7: hw nes, binfmt nes2.0
+    .byte (MAPPER>>8), ((PROM>>4)&$f0)|(CROM>>8)&$f ; 8-9
+    .byte PRAM, CRAM, 0, 0, 0, PERIPH ; 10-15
+    ; TODO fix bytes 10 and 11
