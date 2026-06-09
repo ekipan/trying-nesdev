@@ -228,12 +228,12 @@ DEF vflush, "VFLUSH" ; ( -- ) wait for draw to finish.
     bne :-          ; it might take several frames though.
     rts
 
-VImmediate =  $80 ; args: len val1 val2 val3 ...
-VFill =       $81 ; args: len val
-VTransfer =   $82 ; args: len addrh addrl
-VHorizontal = $83 ; \ set PpuCtrl
-VVertical =   $84 ; / direction bit
-VEnd =        $85 ; stop drawing until next frame
+VSend =  $80 ; args: len val1 val2 val3 ...
+VFill =  $81 ; args: len val
+VMove =  $82 ; args: len addrh addrl
+VHoriz = $83 ; \ set PpuCtrl
+VVert =  $84 ; / direction bit
+VPace =  $85 ; stop drawing until next frame
 
 ; NMI -------------------------------------------------------
 
@@ -307,13 +307,13 @@ draw: ; ~2240c left after nmi prologue
 
 ; entrypoint in the middle for branch range reasons:
 
-@horizontal: ; incrmode bit clear (+1), default per frame
+@horiz: ; incrmode bit clear (+1), default per frame
     _ lda VCtrl, ora #$80, and #$fb, sta PpuCtrl
     jmp @loop
-@vertical: ; incrmode bit set (+32)
+@vert: ; incrmode bit set (+32)
     _ lda VCtrl, ora #$84, sta PpuCtrl
     jmp @loop
-@immediate: ; (x)y=len val1 val2 val3 ...
+@send: ; (x)y=len val1 val2 val3 ...
 :   inx
     lda VCmds,x     ; val#
     _ sta PpuData, dey, bne :-
@@ -338,19 +338,19 @@ draw: ; ~2240c left after nmi prologue
     inx             ; a=opcode (x)(arg1 ...)
     ldy VCmds,x     ; a=opcode (x)y=(arg1) (...)
     ; in order of likeliness, to squeeze cycles:
-    _ cmp #$40, bcc @set_addr       ; $0-3f, valid ppu page?
-    _ cmp #VImmediate, beq @immediate ; workhorse draw
-    _ cmp #VFill, beq @fill         ; clearing/blocking out
-    _ cmp #VEnd, beq @end           ; frame pacing
-    _ cmp #VTransfer, beq @transfer ; usually during setup
-    _ cmp #VVertical, beq @vertical ; switch to columns
-    _ cmp #VHorizontal, beq @horizontal ; back to default
+    _ cmp #$40, bcc @set_addr ; $0-3f, valid ppu page?
+    _ cmp #VSend, beq @send   ; workhorse draw
+    _ cmp #VFill, beq @fill   ; clearing/blocking out
+    _ cmp #VPace, beq @pace   ; separate batches
+    _ cmp #VMove, beq @move   ; usually during setup
+    _ cmp #VVert, beq @vert   ; switch to columns
+    _ cmp #VHoriz, beq @horiz ; back to default
     ; malformed command.
   @abandon:
     ldx VCommit
   @rts:
     rts
-@transfer: ; (x)y=len $hh $ll
+@move: ; (x)y=len $hh $ll
     sty V+2     ; len
     inx
     lda VCmds,x ; $hh
@@ -362,7 +362,7 @@ draw: ; ~2240c left after nmi prologue
 :   lda (V),y
     _ sta PpuData, iny, cpy V+2, bne :-
     beq @inx_and_loop
-@end: ; of frame: defer to next nmi if we've drawn
+@pace: ; end frame and defer to next nmi if we've drawn
     _ lda Mutex, cmp #$02, bcc @begin ; no draws yet?
     rts ; Mutex 0: free, 1: locked but no draws.
 
@@ -434,18 +434,17 @@ DEF rawemit, "RAWEMIT" ; ( c -- ) display a character.
     _ jsr csr_vaddr, inc CsrCol
     _ lda #32, cmp CsrCol, bcc :+ ; still on screen?
     jsr cr ; no: go to next line
-:   _ lda #VImmediate, jsr a_to_v  ; send
-    _ lda #1, jsr a_to_v           ; one
+:   _ lda #VSend, jsr a_to_v, lda #1, jsr a_to_v ; send one
     lda L,x                        ; stack-taken
     _ inx, jsr a_to_v, jmp vcommit ; character
 
 DEF cr, "CR" ; ( -- ) move the cursor to the start of next line.
-    _ lda #VEnd, jsr a_to_v ; flush pending draws.
-    _ lda #$00, sta CsrCol  ; col = 0, increment row:
+    _ lda #VPace, jsr a_to_v ; 64b is risky, pace before/after.
+    _ lda #$00, sta CsrCol   ; col = 0, increment row:
     _ ldy CsrRow, jsr @iny, sty CsrRow, jsr @clear ; and clear.
     _ ldy CsrRow, jsr @iny, jsr @clear ; and below screen.
     ; TODO scroll.
-    _ lda #VEnd, jsr a_to_v, jmp vcommit ; 64b is tight.
+    _ lda #VPace, jsr a_to_v, jmp vcommit
 @iny:
     _ iny, tya, and #31, cmp #30, bcc :+ ; still in-screen?
     _ iny, iny ; pass over attrtable seam.
