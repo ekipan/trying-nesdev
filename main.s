@@ -290,7 +290,7 @@ draw: ; ~2240c left after nmi prologue
     _ ldy #$00, sta V+1, sty V, sty PalPg ; take ptr
     _ sty PpuCtrl ; horizontal mode
     _ lda #$3f, sta PpuAddr, sty PpuAddr ; $3f00-3f1f
-:   lda (V),y   ; \ txfer     5c \ 16c * 32 = 512c
+:   lda (V),y   ; \ txfer     6c \ 17c * 32 = 544c
     sta PpuData ; / byte      4c | TODO unroll?
     _ iny, cpy #$20, bne :- ; 7c / +138 bytes -160 cycles
 :   ; nmi always enabled, start drawing in horizontal mode:
