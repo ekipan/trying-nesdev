@@ -238,14 +238,14 @@ VEnd =        $85 ; stop drawing until next frame
 ; NMI -------------------------------------------------------
 
 .segment "ZEROPAGE" ; nmi/main communication:
-NmiCtrl:    .res 1 ; \ shadow registers.
-NmiMask:    .res 1 ; | updates show up next
-NmiScrollX: .res 1 ; | frame, risk of data
-NmiScrollY: .res 1 ; / races.
-NmiW:   .res 3 ; nmi scratch. main doesn't touch!
-Frames: .res 1 ; counter for synching or delaying.
+VCtrl:  .res 1 ; \ shadow registers.
+VMask:  .res 1 ; | updates show up next
+VSclX:  .res 1 ; | frame, risk of data
+VSclY:  .res 1 ; / races.
+V:      .res 3 ; draw scratch, can't touch W in nmi.
 OamPg:  .res 1 ; if sprites enabled.
 PalPg:  .res 1 ; 0 to skip, clears after upload.
+Frames: .res 1 ; counter for synching or delaying.
 Mutex:  .res 1 ; nonzero: nmi locked, plus draw tally.
 ; a degenerate draw queue eventually tallies to 128+,
 ; the draw interpreter abandons, nmi recovers. TODO xref
@@ -281,37 +281,37 @@ draw: ; ~2240c left after nmi prologue
     ; reset PpuAddr/PpuScroll write latch only once(!):
     bit PpuStatus ; risky! a bug below will break drawing.
     ; load sprites:
-    _ lda NmiMask, sta PpuMask ; bg/sprites on/off
+    _ lda VMask, sta PpuMask ; bg/sprites on/off
     _ and #$10, beq :+ ; sprites disabled? -> skip dma
     _ lda #$00, sta OamAddr ; \ costs
     _ lda OamPg, sta OamDma ; / 521c
 :   ; load palette:
     _ lda PalPg, beq :++ ; palette unchanged?
-    _ ldy #$00, sta NmiW+1, sty NmiW, sty PalPg ; take ptr
+    _ ldy #$00, sta V+1, sty V, sty PalPg ; take ptr
     _ sty PpuCtrl ; horizontal mode
     _ lda #$3f, sta PpuAddr, sty PpuAddr ; $3f00-3f1f
-:   lda (NmiW),y ; \ txfer    5c \ 16c * 32 = 512c
-    sta PpuData  ; / byte     4c | TODO unroll?
+:   lda (V),y   ; \ txfer     5c \ 16c * 32 = 512c
+    sta PpuData ; / byte      4c | TODO unroll?
     _ iny, cpy #$20, bne :- ; 7c / +138 bytes -160 cycles
 :   ; nmi always enabled, start drawing in horizontal mode:
-    _ lda NmiCtrl, ora #$80, and #$fb, sta PpuCtrl
+    _ lda VCtrl, ora #$80, and #$fb, sta PpuCtrl
     ; interpret draw commands, move tail forward:
     _ ldx VTail, jsr @begin, stx VTail
     ; vblank is possibly blown. construct queues carefully!
     ; restore main's configured drawing mode, vblank willing:
-    _ lda NmiCtrl, ora #$80, sta PpuCtrl
+    _ lda VCtrl, ora #$80, sta PpuCtrl
     ; https://www.nesdev.org/wiki/PPU_scrolling#Frequent_pitfalls
-    _ lda NmiScrollX, sta PpuScroll ; shares PpuAddr register,
-    _ lda NmiScrollY, sta PpuScroll ; must set *after* draw.
+    _ lda VSclX, sta PpuScroll ; shares PpuAddr register,
+    _ lda VSclY, sta PpuScroll ; must set *after* draw.
     rts
 
 ; entrypoint in the middle for branch range reasons:
 
 @horizontal: ; incrmode bit clear (+1), default per frame
-    _ lda NmiCtrl, ora #$80, and #$fb, sta PpuCtrl
+    _ lda VCtrl, ora #$80, and #$fb, sta PpuCtrl
     jmp @loop
 @vertical: ; incrmode bit set (+32)
-    _ lda NmiCtrl, ora #$84, sta PpuCtrl
+    _ lda VCtrl, ora #$84, sta PpuCtrl
     jmp @loop
 @immediate: ; (x)y=len val1 val2 val3 ...
 :   inx
@@ -351,23 +351,23 @@ draw: ; ~2240c left after nmi prologue
   @rts:
     rts
 @transfer: ; (x)y=len $hh $ll
-    sty NmiW+2      ; len
+    sty V+2     ; len
     inx
-    lda VCmds,x     ; $hh
-    sta NmiW+1      ; read addr high
+    lda VCmds,x ; $hh
+    sta V+1     ; read addr high
     inx
-    lda VCmds,x     ; $ll
-    sta NmiW        ; read addr low
-    ldy #0          ; scan fwd from 0 to len:
-:   lda (NmiW),y
-    _ sta PpuData, iny, cpy NmiW+2, bne :-
+    lda VCmds,x ; $ll
+    sta V       ; read addr low
+    ldy #0      ; scan fwd from 0 to len:
+:   lda (V),y
+    _ sta PpuData, iny, cpy V+2, bne :-
     beq @inx_and_loop
 @end: ; of frame: defer to next nmi if we've drawn
     _ lda Mutex, cmp #$02, bcc @begin ; no draws yet?
     rts ; Mutex 0: free, 1: locked but no draws.
 
 DEF voff, "VOFF" ; ( -- ) to draw directly.
-    _ lda NmiMask, and #$e7, sta NmiMask ; render off
+    _ lda VMask, and #$e7, sta VMask ; render off
 DEF vsync, "VSYNC" ; ( -- ) wait for next vblank.
     lda Frames
 :   _ cmp Frames, beq :-
@@ -403,11 +403,11 @@ DEF page, "PAGE" ; ( -- ) init and clear the screen.
     ; attempt to recover bad queue/mutex, very racey:
     _ lda VCommit, sta VTail, sta VHead ; delete the queue
     _ lda #$00, sta Mutex ; unlock nmi (paranoid)
-    _ lda #$80, ora NmiCtrl, sta PpuCtrl ; [^1] enable nmi
+    _ lda #$80, ora VCtrl, sta PpuCtrl ; [^1] enable nmi
     jsr voff
     _ lda #$00, sta CsrRow, sta CsrCol
-    sta NmiScrollY ; TODO compute from row
-    _ lda #$f8, sta NmiScrollX ; left edge inside overscan
+    sta VSclY ; TODO compute from row
+    _ lda #$f8, sta VSclX ; left edge inside overscan
     _ lda #>RomPalette, sta PalPg ; default palette
     _ stx W ; save pstack
     _ ldy #$24, lda #$00, bit PpuStatus, sty PpuAddr, sta PpuAddr
@@ -416,7 +416,7 @@ DEF page, "PAGE" ; ( -- ) init and clear the screen.
     _ inx, bne :- ; 256 bytes
     _ dey, bne :- ; 8 pages = nametables 1+2 $2400-2bff [^2]
     _ ldx W ; restore pstack
-    _ lda #$0a, sta NmiMask ; bg on, sprites off
+    _ lda #$0a, sta VMask ; bg on, sprites off
     rts
 
 csr_vaddr: ; put cursor vaddr onto draw queue.
@@ -431,8 +431,10 @@ ya_vaddr:
     _ jsr plus, jmp to_v
 
 DEF rawemit, "RAWEMIT" ; ( c -- ) display a character.
-    _ jsr csr_vaddr, inc CsrCol ; TODO line overflow -> cr
-    _ lda #VImmediate, jsr a_to_v  ; send
+    _ jsr csr_vaddr, inc CsrCol
+    _ lda #32, cmp CsrCol, bcc :+ ; still on screen?
+    jsr cr ; no: go to next line
+:   _ lda #VImmediate, jsr a_to_v  ; send
     _ lda #1, jsr a_to_v           ; one
     lda L,x                        ; stack-taken
     _ inx, jsr a_to_v, jmp vcommit ; character
@@ -458,7 +460,7 @@ DEF cr, "CR" ; ( -- ) move the cursor to the start of next line.
 
 .segment "CODE"
 reset: ; just powered on, turn off all the things:
-    _ sei, cld
+    _ sei, cld ; irq, decimal mode
     _ ldx #$40, stx Joy2 ; sound, and screen:
     _ ldx #$00, stx DmcFreq, stx PpuCtrl, stx PpuMask
     ; wait 2 frames for ppu, init ram in the meantime:
@@ -488,16 +490,16 @@ main:
 
 add_y: ; y += a, [-16..16] for correct seam jump.
     clc
-    adc NmiScrollY
+    adc VSclY
     tay
     cmp #$f0
     bcc :+          ; not between screens?
     sbc #$f0        ; a = a-240-(1-c)
     tay
     lda #2
-    eor NmiCtrl
-    sta NmiCtrl    ; flip ntbl \ data
-:   sty NmiScrollY ;           / race 3c
+    eor VCtrl ; flip
+    sta VCtrl ; ntbl \ data
+:   sty VSclY ;      / race 3c
     rts
 
 .segment "CODE"
