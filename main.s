@@ -185,7 +185,7 @@ DEF plus, "+" ; ( n1 n0 -- n1+n0 ) addition.
     inx
     rts
 
-; DRAW COMMANDS QUEUE ---------------------------------------
+; VIDEO DRIVER ----------------------------------------------
 
 ; the picture processing unit rejects i/o while drawing the
 ; screen, draw commands must be sent during 2270c vblank, so
@@ -195,47 +195,19 @@ DEF plus, "+" ; ( n1 n0 -- n1+n0 ) addition.
      .align 256 ; page-aligned so indices wrap.
 VCmds: .res 256 ; encoded drawing commands queue.
 
+VHoriz = $40 ; \ set PpuCtrl
+VVert =  $41 ; / direction bit
+VSend =  $42 ; args: len val1 val2 val3 ...
+VFill =  $43 ; args: len val
+VMove =  $44 ; args: len addrh addrl
+VPace =  $45 ; stop drawing until next frame
+
 .segment "ZEROPAGE" ; $0-ff indices into the queue:
 VHead:   .res 1 ; 1) main appends commands here.
 VCommit: .res 1 ; 2) main moves this fwd to publish to nmi.
 VTail:   .res 1 ; 3) nmi interprets and moves fwd.
 ; conceptually tail <= commit <= head, though since they
 ; wrap in memory that won't usually be literally true.
-
-.segment "CODE"
-DEF to_v, ">V" ; ( addr -- ) append address to queue.
-    Lda H,x         ; queue expects big-endian!
-    jsr a_to_v
-DEF c_to_v, "C>V" ; ( c -- ) append byte to queue.
-    lda L,x
-    inx
-a_to_v:
-    ldy VHead
-    sta VCmds,y
-    iny             ; full page buffer, expects wraparound.
-    sty VHead
-    rts
-
-DEF vcommit, "VCOMMIT" ; ( -- ) send queued draw commands.
-    _ lda VHead, sta VCommit, rts
-
-DEF vflush, "VFLUSH" ; ( -- ) wait for draw to finish.
-    lda VCommit
-    ; TODO degenerate case: malformed queue that defers often
-    ; but overshoots VCommit and never finishes. could add a
-    ; Frames check, or rely on nmi break key (also TODO).
-:   cmp VTail       ; nmi will failsafe on a runaway queue.
-    bne :-          ; it might take several frames though.
-    rts
-
-VSend =  $80 ; args: len val1 val2 val3 ...
-VFill =  $81 ; args: len val
-VMove =  $82 ; args: len addrh addrl
-VHoriz = $83 ; \ set PpuCtrl
-VVert =  $84 ; / direction bit
-VPace =  $85 ; stop drawing until next frame
-
-; NMI -------------------------------------------------------
 
 .segment "ZEROPAGE" ; nmi/main communication:
 VCtrl:  .res 1 ; \ shadow registers.
@@ -250,32 +222,17 @@ Mutex:  .res 1 ; nonzero: nmi locked, plus draw tally.
 ; a degenerate draw queue eventually tallies to 128+,
 ; the draw interpreter abandons, nmi recovers. TODO xref
 
-DmcFreq =   $4010
-OamDma =    $4014
-Joy1 =      $4016
-Joy2 =      $4017
 ; https://www.nesdev.org/wiki/PPU_registers
-PpuCtrl =   $2000 ; %n-tbsvyx nmi tall bgpat sprpat vert yxtbl
+PpuCtrl =   $2000 ; %n.tbsvyx nmi tall bgpat sprpat vert yxtbl
 PpuMask =   $2001 ; %rgbsbllg dimrgb spr bg leftcol greysc
-PpuStatus = $2002 ; %vho----- vblank 0hit overflow
+PpuStatus = $2002 ; %vho..... vblank 0hit overflow
 OamAddr =   $2003 ; ppu write offset, nonzero corrupts oam!
 PpuScroll = $2005 ; send x then y \ touch PpuStatus
 PpuAddr =   $2006 ; addrh, addrl  / to reset order latch
 PpuData =   $2007 ; increments by 1 or 32 (PpuCtrl vert)
+OamDma =    $4014 ; (cpu) page to transfer to ppu
 
-.segment "CODE" ; service a nonmaskable interrupt.
-nmi: ; 2270c deadline to finish drawing
-    _ bit Custom, bpl :+ ; default nmi service?
-    jmp (Nmi) ; no, custom
-:   _ pha, lda Mutex, bne :+ ; locked? -> leave re-entry.
-    _ txa, pha, tya, pha
-    ; lock, notify main a vblank happened, process queue:
-    _ inc Mutex, inc Frames, jsr draw
-    ; TODO poll joypad? scan kb? sound?
-    _ lda #0, sta Mutex ; unlock next frame
-    _ pla, tay, pla, tax
-:   _ pla, rti
-
+.segment "CODE"
 draw: ; ~2240c left after nmi prologue
     ; TODO store 1 to Mutex on entry/exit
     ; reset PpuAddr/PpuScroll write latch only once(!):
@@ -305,7 +262,7 @@ draw: ; ~2240c left after nmi prologue
     _ lda VSclY, sta PpuScroll ; must set *after* draw.
     rts
 
-; entrypoint in the middle for branch range reasons:
+; interpreter enters in the middle for branch range reasons:
 
 @horiz: ; incrmode bit clear (+1), default per frame
     _ lda VCtrl, ora #$80, and #$fb, sta PpuCtrl
@@ -366,6 +323,33 @@ draw: ; ~2240c left after nmi prologue
     _ lda Mutex, cmp #$02, bcc @begin ; no draws yet?
     rts ; Mutex 0: free, 1: locked but no draws.
 
+; sending, synching:
+
+DEF to_v, ">V" ; ( addr -- ) append address to queue.
+    Lda H,x         ; queue expects big-endian!
+    jsr a_to_v
+DEF c_to_v, "C>V" ; ( c -- ) append byte to queue.
+    lda L,x
+    inx
+a_to_v:
+    ldy VHead
+    sta VCmds,y
+    iny             ; full page buffer, expects wraparound.
+    sty VHead
+    rts
+
+DEF vcommit, "VCOMMIT" ; ( -- ) send queued draw commands.
+    _ lda VHead, sta VCommit, rts
+
+DEF vflush, "VFLUSH" ; ( -- ) wait for draw to finish.
+    lda VCommit
+    ; TODO degenerate case: malformed queue that defers often
+    ; but overshoots VCommit and never finishes. could add a
+    ; Frames check, or rely on nmi break key (also TODO).
+:   cmp VTail       ; nmi will failsafe on a runaway queue.
+    bne :-          ; it might take several frames though.
+    rts
+
 DEF voff, "VOFF" ; ( -- ) to draw directly.
     _ lda VMask, and #$e7, sta VMask ; render off
 DEF vsync, "VSYNC" ; ( -- ) wait for next vblank.
@@ -373,7 +357,7 @@ DEF vsync, "VSYNC" ; ( -- ) wait for next vblank.
 :   _ cmp Frames, beq :-
     rts
 
-; terminal primitives:
+; TTY DRIVER ------------------------------------------------
 
 .segment "RODATA"
 RomPalette:
@@ -382,7 +366,7 @@ RomPalette:
         .byte $0F, $29, $17, $20
     .endrepeat
 
-.segment "ZEROPAGE"
+.segment "ZEROPAGE" ; tty cursor:
 CsrCol: .res 1 ; 0-31, width of screen.
 CsrRow: .res 1 ; 0-253, except seam rows 30,31,62,63 etc
 ; vaddr calc drops CsrRow.6-7, so effectively 0-29,32-61.
@@ -432,7 +416,7 @@ ya_vaddr:
 
 DEF rawemit, "RAWEMIT" ; ( c -- ) display a character.
     _ jsr csr_vaddr, inc CsrCol
-    _ lda #32, cmp CsrCol, bcc :+ ; still on screen?
+    _ lda CsrCol, cmp #32, bcc :+ ; still on screen?
     jsr cr ; no: go to next line
 :   _ lda #VSend, jsr a_to_v, lda #1, jsr a_to_v ; send one
     lda L,x                        ; stack-taken
@@ -455,9 +439,28 @@ DEF cr, "CR" ; ( -- ) move the cursor to the start of next line.
     _ lda #32, jsr a_to_v    ; an entire row
     _ lda #' ', jmp a_to_v   ; with spaces
 
-; RESET, MAIN -----------------------------------------------
+; MAIN ------------------------------------------------------
 
 .segment "CODE"
+main:
+    _ lda #1, jsr add_y, jsr vsync, jmp main
+
+add_y: ; scly += a, [-16..16] for correct seam jump.
+    clc
+    adc VSclY
+    tay
+    cmp #$f0
+    bcc :+    ; not between screens?
+    sbc #$f0  ; a = a-240-(1-c)
+    tay
+    lda #2
+    eor VCtrl ; flip
+    sta VCtrl ; ntbl \ data
+:   sty VSclY ;      / race 3c
+    rts
+
+_ DmcFreq = $4010, Joy1 = $4016, Joy2 = $4017
+
 reset: ; just powered on, turn off all the things:
     _ sei, cld ; irq, decimal mode
     _ ldx #$40, stx Joy2 ; sound, and screen:
@@ -472,7 +475,7 @@ reset: ; just powered on, turn off all the things:
     sta $100,x
     sta $200,x
     sta $300,x
-    sta $400,x      ; TODO (block buffer here? leave dirty?)
+    sta $400,x ; TODO (block buffer here? leave dirty?)
     sta $500,x
     sta $600,x
     sta $700,x
@@ -480,28 +483,20 @@ reset: ; just powered on, turn off all the things:
 :   _ bit PpuStatus, bpl :- ; second frame
     ; TODO init banks? keyboard? tty?
     _ ldx #$ff, txs, inx ; clear both forth stacks
-    jsr page        ; clear background and start nmi.
-main:
-    lda #1 ; pixel
-    jsr add_y
-    jsr vsync       ; wait one frame
-    jmp main
+    _ jsr page, jmp main ; clear bg, start nmi, start main
 
-add_y: ; y += a, [-16..16] for correct seam jump.
-    clc
-    adc VSclY
-    tay
-    cmp #$f0
-    bcc :+          ; not between screens?
-    sbc #$f0        ; a = a-240-(1-c)
-    tay
-    lda #2
-    eor VCtrl ; flip
-    sta VCtrl ; ntbl \ data
-:   sty VSclY ;      / race 3c
-    rts
+nmi: ; 2270c deadline to finish drawing
+    _ bit Custom, bpl :+ ; default nmi service?
+    jmp (Nmi) ; no, custom
+:   _ pha, lda Mutex, bne :+ ; locked? -> leave re-entry.
+    _ txa, pha, tya, pha
+    ; lock, notify main a vblank happened, process queue:
+    _ inc Mutex, inc Frames, jsr draw
+    ; TODO poll Joy1? scan kb? sound?
+    _ lda #0, sta Mutex ; unlock next frame
+    _ pla, tay, pla, tax
+:   _ pla, rti
 
-.segment "CODE"
 irq:
     _ bit Custom, bvc :+
     jmp (Irq)
