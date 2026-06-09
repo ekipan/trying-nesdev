@@ -516,8 +516,8 @@ Irq:    .res 2 ; / to 0 first to update atomically.
 ; see Makefile for cart configuration defines.
 .segment "INES" ; https://www.nesdev.org/wiki/NES_2.0
     .byte "NES", $1a, PROM&255, CROM&255 ; 0-5
-    .byte ((MAPPER&$f)<<4) | ((PRAM>0)<<1) | MIRROR ; 6
+    .byte ((MAPPER&$f)<<4) | ((PSRAM+CSRAM>0)<<1) | MIRROR ; 6
     .byte ((MAPPER>>4)&$f) | 8 ; 7: hw nes, binfmt nes2.0
     .byte (MAPPER>>8), ((PROM>>4)&$f0)|(CROM>>8)&$f ; 8-9
-    .byte PRAM, CRAM, 0, 0, 0, PERIPH ; 10-15
-    ; TODO fix bytes 10 and 11
+    .byte (PSRAM<<4)|PWRAM, (CSRAM<<4)|CWRAM ; 10-11
+    .byte 0, 0, 0, PERIPH ; 12-15

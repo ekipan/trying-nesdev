@@ -20,8 +20,9 @@ o/ff.nes: $(LDIN) | o ## (default)
 	$(LD65) $(LDOPT) -o $@ -C $^
 
 CART = -D MAPPER=$(MAPPER) -D MIRROR=$(MIRROR) \
--D PROM=$(PROM) -D PRAM=$(PRAM) -D CROM=$(CROM) \
--D CRAM=$(CRAM) -D PERIPH=$(PERIPH) # defined below.
+-D PROM=$(PROM) -D PWRAM=$(PWRAM) -D PSRAM=$(PSRAM) \
+-D CROM=$(CROM) -D CWRAM=$(CWRAM) -D CSRAM=$(CSRAM) \
+-D PERIPH=$(PERIPH)
 
 o/%.o: %.s | o        # code and data.
 	$(CA65) $(CART) -g -l $@.lst -o $@ $<
@@ -46,9 +47,6 @@ help:                 # list targets.
 
 .PHONY: all clean help run
 
-# I embed build boilerplate into Makefile so I'm more
-# likely to keep it up to date.
-
 # nes cartridge configurations vary wildly. emulators support
 # a huge range, but I still need to study the constraints of
 # a feasibly realizable cart (TODO). I'm not very interested
@@ -67,15 +65,18 @@ help:                 # list targets.
 # https://www.nesdev.org/wiki/Mapper
 MAPPER = 0# $smmm: w/ sub. 0 nrom, 1 mmc1, 218 nesmon's
 MIRROR = 0# 0/1: horiz/vert, opposite scroll dir
-PROM   = 2# $nnn:  16k banks at cpu $8000-bfff, $c000-ffff
-PRAM   = 1# $nn:    8k banks at cpu $6000-7fff, w/ battery
-CROM   = 1# $nnn: \ 8k banks on ppu bus
-CRAM   = 0# $nn:  / usually one or the other
-PERIPH = 0# $0-4f: 0 none, $23 basic keyboard
+PROM   = 2# $nnn: 16k banks at cpu $8000-bfff, $c000-ffff
+CROM   = 1# $nnn:  8k banks on ppu bus
+PWRAM  = 0# \ 0=0 ... 6=4k 7=8k 8=16k 9=32k ... 14=1024k
+PSRAM  = 7# | save-ram: battery-backed.
+CWRAM  = 0# | work-ram: volatile.
+CSRAM  = 0# / prg on cpu, chr on ppu bus
+PERIPH = 0# $0-4f: 0 none, 1 joypad, $23 basic keyboard
 
 # these are embedded in the INES segment in main.s. then the
 # linker script decides where to put the bytes in the binary
 # file and resolves pointers between and within segments.
+# embedded here so I'm more likely to keep it up to date:
 
 #0-link.cfg
 # MEMORY {
