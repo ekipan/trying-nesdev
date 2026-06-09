@@ -59,8 +59,8 @@
 
 ; CORE ------------------------------------------------------
 
-.segment "PSTACK": zp ; to lay at 0 for aesthetics.
-     .res 32 ; usual convention: y: [H], a: [L], x: index.
+.segment "PSTACK": zp ; registers: x param stack depth,
+     .res 32          ;  y/a scratch, often: y=[H], a=[L].
 L:   .res 32 ; \ push-down, x-indexed, split parameter stack
 H:           ; / to pass data between words. depth 1: x = $ff.
 W:   .res 2  ; then six bytes of scratch, including:
