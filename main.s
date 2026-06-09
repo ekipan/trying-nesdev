@@ -234,7 +234,7 @@ OamDma =    $4014 ; (cpu) page to transfer to ppu
 
 .segment "CODE"
 draw: ; ~2240c left after nmi prologue
-    ; TODO store 1 to Mutex on entry/exit
+    _ lda #1, sta Mutex ; lock nmi for synch'd draw.
     ; reset PpuAddr/PpuScroll write latch only once(!):
     bit PpuStatus ; risky! a bug below will break drawing.
     ; load sprites:
@@ -250,21 +250,23 @@ draw: ; ~2240c left after nmi prologue
 :   lda (V),y   ; \ txfer     6c \ 17c * 32 = 544c
     sta PpuData ; / byte      4c | TODO unroll?
     _ iny, cpy #$20, bne :- ; 7c / +138 bytes -160 cycles
-:   ; interpret draw commands, move tail forward:
-    _ ldx VTail, jsr @horiz, stx VTail
+:   ; save pstack, interpret draw commands, advance tail:
+    _ txa, pha, ldx VTail, jsr @horiz, stx VTail, pla, tax
     ; vblank is possibly blown. construct queues carefully!
     ; restore main's configured drawing mode, vblank willing:
     _ lda VCtrl, ora #$80, sta PpuCtrl
     ; https://www.nesdev.org/wiki/PPU_scrolling#Frequent_pitfalls
     _ lda VSclX, sta PpuScroll ; shares PpuAddr register,
     _ lda VSclY, sta PpuScroll ; must set *after* draw.
+    ; restore invariant: caller can unlock with dec Mutex.
+    _ lda #1, sta Mutex ; remove command tally.
     rts
 
 ; interpreter loop inlined into most common command set_addr,
 ; in the middle for branch range reasons.
 
-@horiz: ; incrmode bit clear (+1), default per frame
-    ; nmi always enabled, start drawing in horizontal mode:
+@horiz: ; incrmode bit clear (+1), default.
+    ; nmi always enabled $80:
     _ lda VCtrl, ora #$80, and #$fb, sta PpuCtrl
     bne @loop
 @vert: ; incrmode bit set (+32)
@@ -319,8 +321,8 @@ draw: ; ~2240c left after nmi prologue
     _ sta PpuData, iny, cpy V+2, bne :-
     beq @inx_and_loop
 @pace: ; end frame and defer to next nmi if we've drawn
-    ; Mutex inc'd by nmi and @horiz, 2 = no draws:
-    _ lda Mutex, cmp #$03, bcc @decode ; no draws yet?
+    ; Mutex: draw stores 1, @horiz inc's, so 2 = no draws:
+    _ lda Mutex, cmp #$02, beq @decode ; no draws yet?
     rts
 
 ; sending, synching:
@@ -488,14 +490,13 @@ reset: ; just powered on, turn off all the things:
 nmi: ; 2270c deadline to finish drawing
     _ bit Custom, bpl :+ ; default nmi service?
     jmp (Nmi) ; no, custom
-:   _ pha, lda Mutex, bne :+ ; locked? -> leave re-entry.
-    _ txa, pha, tya, pha
-    ; lock, notify main a vblank happened, process queue:
-    _ inc Mutex, inc Frames, jsr draw
+:   _ pha, tya, pha ; subroutines responsible for x.
+    _ lda Mutex, bne :+ ; re-entered?
+    inc Frames ; notify main a vblank happened.
+    jsr draw   ; store 1 in Mutex and process queue.
     ; TODO poll Joy1? scan kb? sound?
     _ lda #0, sta Mutex ; unlock next frame
-    _ pla, tay, pla, tax
-:   _ pla, rti
+:   _ pla, tay, pla, rti
 
 irq:
     _ bit Custom, bvc :+
