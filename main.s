@@ -250,10 +250,8 @@ draw: ; ~2240c left after nmi prologue
 :   lda (V),y   ; \ txfer     6c \ 17c * 32 = 544c
     sta PpuData ; / byte      4c | TODO unroll?
     _ iny, cpy #$20, bne :- ; 7c / +138 bytes -160 cycles
-:   ; nmi always enabled, start drawing in horizontal mode:
-    _ lda VCtrl, ora #$80, and #$fb, sta PpuCtrl
-    ; interpret draw commands, move tail forward:
-    _ ldx VTail, jsr @begin, stx VTail
+:   ; interpret draw commands, move tail forward:
+    _ ldx VTail, jsr @horiz, stx VTail
     ; vblank is possibly blown. construct queues carefully!
     ; restore main's configured drawing mode, vblank willing:
     _ lda VCtrl, ora #$80, sta PpuCtrl
@@ -262,14 +260,16 @@ draw: ; ~2240c left after nmi prologue
     _ lda VSclY, sta PpuScroll ; must set *after* draw.
     rts
 
-; interpreter enters in the middle for branch range reasons:
+; interpreter loop inlined into most common command set_addr,
+; in the middle for branch range reasons.
 
 @horiz: ; incrmode bit clear (+1), default per frame
+    ; nmi always enabled, start drawing in horizontal mode:
     _ lda VCtrl, ora #$80, and #$fb, sta PpuCtrl
-    jmp @loop
+    bne @loop
 @vert: ; incrmode bit set (+32)
     _ lda VCtrl, ora #$84, sta PpuCtrl
-    jmp @loop
+    bne @loop
 @send: ; (x)y=len val1 val2 val3 ...
 :   inx
     lda VCmds,x     ; val#
@@ -280,7 +280,6 @@ draw: ; ~2240c left after nmi prologue
     lda VCmds,x     ; val
 :   _ sta PpuData, dey, bne :-
     beq @inx_and_loop
-; most common command, to fallthru into @loop:
 @set_addr: ; a=$hh (x)y=$ll
     _ sta PpuAddr, sty PpuAddr ; unlatched(!) to save 4c
   @inx_and_loop:
@@ -288,7 +287,7 @@ draw: ; ~2240c left after nmi prologue
   @loop:
     inc Mutex       ; reuse nmi lock to tally finished commands
     bmi @abandon    ; >127? probably a runaway queue
-  @begin: ; x = cursor into page-aligned ring buffer <- ENTRY
+  @decode: ; x = cursor into page-aligned ring buffer.
     _ cpx VCommit, beq @rts ; no work left to do?
     ; command bytes:  (x)opcode (arg1 arg2 ...)
     lda VCmds,x     ; (x)a=opcode (arg1 ...)
@@ -320,8 +319,9 @@ draw: ; ~2240c left after nmi prologue
     _ sta PpuData, iny, cpy V+2, bne :-
     beq @inx_and_loop
 @pace: ; end frame and defer to next nmi if we've drawn
-    _ lda Mutex, cmp #$02, bcc @begin ; no draws yet?
-    rts ; Mutex 0: free, 1: locked but no draws.
+    ; Mutex inc'd by nmi and @horiz, 2 = no draws:
+    _ lda Mutex, cmp #$03, bcc @decode ; no draws yet?
+    rts
 
 ; sending, synching:
 
