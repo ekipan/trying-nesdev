@@ -419,24 +419,37 @@ DEF page, "PAGE" ; ( -- ) init and clear the screen.
     _ lda #$0a, sta NmiMask ; bg on, sprites off
     rts
 
+csr_vaddr: ; put cursor vaddr onto draw queue.
+    _ ldy CsrRow, lda CsrCol
+ya_vaddr:
+    sta W+1 ; compute: $2400 + ((y & 63) << 5 | a)
+    _ lda #$00, sta W           ; W %00000000  y %xxrrrrrr
+    _ tya, asl, asl, asl, rol W ; W %0000000r  a %rrrrr000
+    _ asl, rol W, asl, rol W    ; W %00000rrr  a %rrr00000
+    _ ldy W, ora W+1, jsr push_ya ; ( offset )
+    _ ldy #$24, lda #$00, jsr push_ya ; ( offset base )
+    _ jsr plus, jmp to_v
+
+DEF rawemit, "RAWEMIT" ; ( c -- ) display a character.
+    _ jsr csr_vaddr, inc CsrCol ; TODO line overflow -> cr
+    _ lda #VImmediate, jsr a_to_v  ; send
+    _ lda #1, jsr a_to_v           ; one
+    lda L,x                        ; stack-taken
+    _ inx, jsr a_to_v, jmp vcommit ; character
+
 DEF cr, "CR" ; ( -- ) move the cursor to the start of next line.
     _ lda #VEnd, jsr a_to_v ; flush pending draws.
-    _ lda #$00, sta CsrCol ; col = 0, increment row:
+    _ lda #$00, sta CsrCol  ; col = 0, increment row:
     _ ldy CsrRow, jsr @iny, sty CsrRow, jsr @clear ; and clear.
     _ ldy CsrRow, jsr @iny, jsr @clear ; and below screen.
     ; TODO scroll.
-    jmp vcommit
+    _ lda #VEnd, jsr a_to_v, jmp vcommit ; 64b is tight.
 @iny:
     _ iny, tya, and #31, cmp #30, bcc :+ ; still in-screen?
     _ iny, iny ; pass over attrtable seam.
 :   rts
-@clear: ; TODO extract cursor compute from this for 'page'
-    _ lda #$00, sta W ; compute: $2400 + (y & 63) << 5
-    _ tya, asl, asl, asl, rol W
-    _ asl, rol W, asl, rol W
-    _ ldy W, jsr push_ya ; ( offset )
-    _ ldy #$24, lda #$00, jsr push_ya, ; ( offset base )
-    _ jsr plus, jsr to_v     ; at row address:
+@clear:
+    _ lda #0, jsr ya_vaddr   ; at row address:
     _ lda #VFill, jsr a_to_v ; fill
     _ lda #32, jsr a_to_v    ; an entire row
     _ lda #' ', jmp a_to_v   ; with spaces
