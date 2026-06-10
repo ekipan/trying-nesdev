@@ -66,12 +66,12 @@ help:                 # list targets.
 MAPPER = 0# $smmm: w/ sub. 0 nrom, 1 mmc1, 218 nesmon's
 MIRROR = 0# 0/1: horiz/vert, opposite scroll dir
 PROM   = 2# $nnn: 16k banks at cpu $8000-bfff, $c000-ffff
-CROM   = 1# $nnn:  8k banks on ppu bus
-PWRAM  = 0# \ 0=0 ... 6=4k 7=8k 8=16k 9=32k ... 14=1024k
-PSRAM  = 7# | save-ram: battery-backed.
+CROM   = 1# $nnn: 8k banks on ppu bus
+PWRAM  = 7# \ 0=0 ... 6=4k 7=8k 8=16k 9=32k ... 14=1024k
+PSRAM  = 0# | save-ram: battery-backed.
 CWRAM  = 0# | work-ram: volatile.
 CSRAM  = 0# / prg on cpu, chr on ppu bus
-PERIPH = 0# $0-4f: 0 none, 1 joypad, $23 basic keyboard
+PERIPH = 0x23# $0-4f: 0 none, 1 joypad, $23 basic keyboard
 
 # these are embedded in the INES segment in main.s. then the
 # linker script decides where to put the bytes in the binary

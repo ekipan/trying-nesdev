@@ -56,6 +56,57 @@ DEF plus, "+" ; ( n1 n0 -- n1+n0 ) addition.
     inx
     rts
 
+; KB DRIVER -------------------------------------------------
+
+; https://www.nesdev.org/wiki/Family_BASIC_Keyboard#Usage
+; https://lira.kraamwinkel.be/articles/nes_keyboard
+; not much here yet. experimenting.
+
+.segment "ZEROPAGE"
+KbScan:  .res 9 ; 0 = unheld, 1 = held
+KbPress: .res 9 ; 0 = no change, 1 = went down
+K:       .res 2 ; scratch
+; a goal is for newly zeroed memory to represent lack of
+; input. it adds a couple more eor's into the scanner but
+; that's fine: we have to waste cycles anyway.
+
+.segment "CODE"
+kb_scan:
+    ; 9 rows * 2 cols * 4 bits = 72 keys.
+    _ lda #5, sta Joy1 ; reset keyboard to row 0, col 0.
+    jsr @wait_12c
+    _ lda #4, sta Joy1 ; strobe column 0. wait 50c:
+    ; interleave work while waiting for the matrix to settle:
+    ; cycle counts:     line accum
+    jsr @wait_36c      ; 36c 36c
+    _ bit 0, ldy #8    ;  5c 41c  scan 9 rows: 8-0.
+:   lda KbScan,y       ;  4c 45c  \ temporarily save previous
+    sta KbPress,y      ;  5c 50c  / scan to detect keypresses.
+    _ lda Joy2, sta K  ; read column 0: %...kkkk. 0 = held
+    _ lda #6, sta Joy1 ; strobe column 1. wait 50c:
+    jsr @wait_36c      ; 36c 36c
+    _ lda K, asl, asl  ;  7c 43c  %.kkkk.00 <- column 0
+    _ asl, and #$f0    ;  4c 47c  %kkkk0000
+    sta K              ;  3c 50c
+    _ lda Joy2, sta K+1 ; read column 1: %...kkkk. 0 = held
+    _ lda #4, sta Joy1 ; strobe next row column 0, wait 50c:
+    _ lda K+1, lsr     ;  5c  5c  %0...kkkk <- column 1
+    _ and #$0f, ora K  ;  5c 10c  %kkkkkkkk
+    eor #$ff           ;  2c 12c  1 = curr held
+    sta KbScan,y       ;  5c 17c
+    eor #$ff           ;  2c 19c  1 = curr unheld
+    and KbPress,y      ;  4c 23c  1 = curr unheld & prev held
+    eor #$ff           ;  2c 25c  1 = curr held & prev unheld
+    sta KbPress,y      ;  5c 30c  i.e. pressed
+    _ tya, beq @done   ;  4c 34c
+    _ dey, nop, jmp :- ;  7c 41c -> : 4c+5c 50c
+@wait_36c:
+    jsr @wait_12c ; 12c
+    jsr @wait_12c ; 12c
+@wait_12c:
+@done:
+    rts ; 6c (+6c jsr to get here)
+
 ; VIDEO DRIVER ----------------------------------------------
 
 ; https://www.nesdev.org/wiki/PPU
@@ -350,9 +401,9 @@ reset: ; just powered on, turn off all the things:
     sta $600,x
     sta $700,x ; TODO wipe page $60?
     _ inx, bne :-
-    ; TODO init banks? keyboard?
-:   _ bit PpuStatus, bpl :- ; second frame
     _ ldx #$ff, txs, inx ; clear both forth stacks
+    ; TODO init banks?
+:   _ bit PpuStatus, bpl :- ; second frame
     _ jsr page, jmp main ; clear bg, start nmi, start main
 
 nmi: ; 2270c deadline to finish drawing
@@ -362,7 +413,8 @@ nmi: ; 2270c deadline to finish drawing
     _ lda Mutex, bne :+ ; re-entered?
     inc Frames ; notify main a vblank happened.
     jsr draw   ; store 1 in Mutex and process queue.
-    ; TODO poll Joy1? scan kb? sound?
+    ; TODO poll Joy1? sound?
+    jsr kb_scan ; 1205c, 10.6 scanlines
     _ lda #0, sta Mutex ; unlock next frame
 :   _ pla, tay, pla, rti
 
