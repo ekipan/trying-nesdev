@@ -68,13 +68,14 @@ DEF plus, "+" ; ( n1 n0 -- n1+n0 ) addition.
      .align 256 ; page-aligned so indices wrap.
 VCmds: .res 256 ; encoded drawing commands queue.
 
-; $0-3f: set PpuAddr, other opcodes:
-VHoriz = $40 ; \ set PpuCtrl
-VVert =  $41 ; / direction bit
-VSend =  $42 ; args: len val1 val2 val3 ...
-VFill =  $43 ; args: len val
-VMove =  $44 ; args: len addrh addrl
-VPace =  $45 ; stop drawing until next frame
+; $0-3f: set PpuAddr, other opcodes far away so it's less
+; likely overflowed addresses will be misinterpreted:
+VHoriz = $a0 ; \ reset/set increment mode
+VVert =  $a1 ; / bit PpuCtrl.1 (+1/32)
+VSend =  $a2 ; args: len val1 val2 val3 ...
+VFill =  $a3 ; args: len val
+VMove =  $a4 ; args: len addrh addrl
+VPace =  $a5 ; stop drawing until next frame
 
 .segment "ZEROPAGE" ; $0-ff indices into the queue:
 VHead:   .res 1 ; 1) main appends commands here.
