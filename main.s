@@ -58,6 +58,8 @@ DEF plus, "+" ; ( n1 n0 -- n1+n0 ) addition.
 
 ; VIDEO DRIVER ----------------------------------------------
 
+; https://www.nesdev.org/wiki/PPU
+; https://github.com/bbbradsmith/NES-ca65-example
 ; the picture processing unit rejects i/o while drawing the
 ; screen, draw commands must be sent during 2270c vblank, so
 ; I encode them into a ring buffer to send asynchronously.
@@ -66,6 +68,7 @@ DEF plus, "+" ; ( n1 n0 -- n1+n0 ) addition.
      .align 256 ; page-aligned so indices wrap.
 VCmds: .res 256 ; encoded drawing commands queue.
 
+; $0-3f: set PpuAddr, other opcodes:
 VHoriz = $40 ; \ set PpuCtrl
 VVert =  $41 ; / direction bit
 VSend =  $42 ; args: len val1 val2 val3 ...
@@ -75,12 +78,12 @@ VPace =  $45 ; stop drawing until next frame
 
 .segment "ZEROPAGE" ; $0-ff indices into the queue:
 VHead:   .res 1 ; 1) main appends commands here.
-VCommit: .res 1 ; 2) main moves this fwd to publish to nmi.
-VTail:   .res 1 ; 3) nmi interprets and moves fwd.
+VCommit: .res 1 ; 2) main moves this fwd to publish to draw.
+VTail:   .res 1 ; 3) draw interprets and moves fwd.
 ; conceptually tail <= commit <= head, though since they
 ; wrap in memory that won't usually be literally true.
 
-.segment "ZEROPAGE" ; nmi/main communication:
+.segment "ZEROPAGE" ; draw/main communication:
 VCtrl:  .res 1 ; \ shadow registers. sent next draw, except
 VMask:  .res 1 ; | VCtrl.7 ignored: nmi is kept enabled.
 VSclX:  .res 1 ; | careful of data races. for synchronous
@@ -96,7 +99,7 @@ Mutex:  .res 1 ; nonzero: nmi locked, plus draw tally.
 ; https://www.nesdev.org/wiki/PPU_registers
 PpuCtrl =   $2000 ; %n.tbsvyx nmi tall bgpat sprpat vert yxtbl
 PpuMask =   $2001 ; %rgbsbllg dimrgb spr bg leftcol greysc
-PpuStatus = $2002 ; %vho..... vblank 0hit overflow
+PpuStatus = $2002 ; %vzo..... vblank zerohit overflow
 OamAddr =   $2003 ; ppu write offset, nonzero corrupts oam!
 PpuScroll = $2005 ; send x then y \ touch PpuStatus
 PpuAddr =   $2006 ; addrh, addrl  / to reset order latch
@@ -104,10 +107,9 @@ PpuData =   $2007 ; increments by 1 or 32 (PpuCtrl vert)
 OamDma =    $4014 ; (cpu) page to transfer to ppu
 
 .segment "CODE"
-draw: ; ~2240c left after nmi prologue
-    _ lda #1, sta Mutex ; lock nmi for synch'd draw.
-    ; reset PpuAddr/PpuScroll write latch only once(!):
-    bit PpuStatus ; risky! a bug below will break drawing.
+draw: ; ~2240c left after nmi prologue.
+    _ lda #1, sta Mutex ; lock nmi for synch'd draw in main.
+    bit PpuStatus ; reset PpuAddr/PpuScroll write latch.
     ; load sprites:
     _ lda VMask, sta PpuMask ; bg/sprites on/off
     _ and #$10, beq :+ ; sprites disabled? -> skip dma
@@ -154,7 +156,9 @@ draw: ; ~2240c left after nmi prologue
 :   _ sta PpuData, dey, bne :-
     beq @inx_and_loop
 @set_addr: ; a=$hh (x)y=$ll
-    _ sta PpuAddr, sty PpuAddr ; unlatched(!) to save 4c
+    ; rely on caller to reset latch, save 4c:
+    ;bit PpuStatus ; draw bugs? uncomment first (!!)
+    _ sta PpuAddr, sty PpuAddr
   @inx_and_loop:
     inx
   @loop:
@@ -342,10 +346,10 @@ reset: ; just powered on, turn off all the things:
     sta $400,x ; TODO (block buffer here? leave dirty?)
     sta $500,x
     sta $600,x
-    sta $700,x
+    sta $700,x ; TODO wipe page $60?
     _ inx, bne :-
+    ; TODO init banks? keyboard?
 :   _ bit PpuStatus, bpl :- ; second frame
-    ; TODO init banks? keyboard? tty?
     _ ldx #$ff, txs, inx ; clear both forth stacks
     _ jsr page, jmp main ; clear bg, start nmi, start main
 
