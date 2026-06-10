@@ -23,39 +23,9 @@
 .define JMP2 .byte $2C ; bit abs ; 2 operand bytes
 ; to save code versus a jmp over another entrypoint.
 
-; wordlist contiguous through ram/rom boundary at $8000.
-; assembles up into rom, runtime prepends down into ram.
-; `find` scans fwd until a `0` XT after the last rom word.
-
-.macro DEF XT, NAME, FLAGS ; assemble an entry into DICT rom.
-    .pushseg
-    .segment "DICT" ; a nametoken (nt) is an entry address:
-        .addr XT    ; execution token is a code address
-        .byte (FLAGS+0) | .strlen(NAME), NAME ; blank needs +0
-    .popseg ; code follows back in original segment:
+.macro DEF XT, NAME, FLAGS ; (TODO assemble dictionary)
     XT:
-.endmacro ; eg: foo: DEF "FOO" ; ( a -- b ) does foo.
-; xt field first makes an nt a direct xt pointer: >XT = @
-
-; TODO write `find` then put these there
-; Immediate = $80 ; flag: execute even in compile mode
-; NeverTco =  $40 ; flag: never tail-call-optimize into a jmp
-; Hidden =    $20 ; flag: skipped by find
-; Length =    $1f ; mask: up to 31 character names
-
-.macro CONSTANT LABEL_EQ, VALUE ; push value to pstack.
-    _ lda #<VALUE, ldy #>VALUE, jmp push_ya
-    LABEL_EQ VALUE
-.endmacro ; eg: ; DEF foo, "FOO" ; CONSTANT Foo =, 123
-; integrated "=" is weird but greppable. TODO optimize byte?
-
-.macro CVALUE ADDR ; fetch unsigned byte value from ram.
-    _ lda abs:ADDR, jmp push_a
-.endmacro ; wasted abs byte for runtime to store through.
-
-.macro VALUE ADDR ; fetch cell value from ram.
-    _ ldy abs:ADDR+1, lda ADDR, jmp push_ya
-.endmacro ; runtime can detect size by first opcode.
+.endmacro ; eg: DEF foo, "FOO" ; ( a -- b ) does foo.
 
 ; CORE ------------------------------------------------------
 
@@ -68,108 +38,9 @@ Dst: .res 2  ; \ load/store pointers for y-indexed
 Src: .res 2  ; / transfer of multiple bytes.
 
 .segment "CODE"
-DEF store, "!" ; ( n addr -- ) store n at addr.
-    lda L,x
-    ldy H,x
-    inx             ; drop addr
-store_ya: ; ( n -- ) store at y:a.
-    sta Dst
-    sty Dst+1
-    ldy #0
-    lda L,x
-    sta (Dst),y
-    iny
-    lda H,x
-    sta (Dst),y
-    inx             ; drop n
-    rts
-
-DEF fetch, "@" ; ( addr -- n ) fetch n from addr.
-    lda L,x
-    ldy H,x
-    JMP1
-fetch_ya: ; ( -- n ) fetch from y:a.
-    dex             ; add empty slot
-    sta Src
-    sty Src+1
-    ldy #0
-    lda (Src),y
-    sta L,x
-    lda (Src+1),y
-    sta H,x
-    rts
-
-DEF c_store, "C!" ; ( c addr -- ) store c at addr.
-    lda L+0,x       ; L: ..[ll]cc   H:  .. hh 00
-    sta H-1,x       ;    .. ll cc      [ll]hh 00
-    lda L+1,x       ;    .. ll[cc]      ll hh 00
-    sta (H-1,x)     ;    .. ll cc      [ll hh]00
-    _ inx, inx      ; drop c and addr.
-    rts
-
-DEF c_fetch, "C@" ; ( addr -- c ) fetch c from addr.
-    lda L+0,x       ; L: ..[ll]   H:  .. hh
-    sta H-1,x       ;    .. ll       [ll]hh
-    lda (H-1,x)     ;    .. ll       [ll hh]
-    jmp put_a
-
-DEF two_minus, "2-" ; ( n -- n-2 ) subtract 2.
-    jsr one_minus
-DEF one_minus, "1-" ; ( n -- n-1 ) subtract 1.
-    dec L,x
-    bne :+
-    dec H,x
-:   rts
-
-DEF two_plus, "2+" ; ( n -- n+2 ) add 2.
-    jsr one_plus
-DEF one_plus, "1+" ; ( n -- n+1 ) add 1.
-    inc L,x
-    bne :+
-    inc H,x
-:   rts
-
-DEF four_div, "4/" ; ( n -- n/4 ) signed right shift.
-    jsr two_div
-DEF two_div, "2/" ; ( n -- n/2 )
-    lda #$80
-    cmp H,x         ; carry = H+x.7
-    ror H,x
-    ror L,x
-    rts
-
-DEF four_times, "4*" ; ( n -- n*4 ) left shift.
-    jsr two_times
-DEF two_times, "2*" ; ( n -- n*2 )
-    asl L,x
-    rol H,x
-    rts
-
 push_ya: ; push/put_ya/na/a for assembly literals.
     dex
 put_ya:
-    sty H,x
-    sta L,x
-    rts
-
-; forth flags, to be branched to from testing words:
-
-DEF neg_one, "-1" ; ( -- -1 )
-    lda #$ff
-push_na:
-    dex
-put_na:
-    ldy #$ff
-    sty H,x
-    sta L,x
-    rts
-
-DEF zero, "0" ; ( -- 0 )
-    lda #0
-push_a:
-    dex
-put_a:
-    ldy #0
     sty H,x
     sta L,x
     rts
@@ -342,15 +213,6 @@ a_to_v:
 
 DEF vcommit, "VCOMMIT" ; ( -- ) send queued draw commands.
     _ lda VHead, sta VCommit, rts
-
-DEF vflush, "VFLUSH" ; ( -- ) wait for draw to finish.
-    lda VCommit
-    ; TODO degenerate case: malformed queue that defers often
-    ; but overshoots VCommit and never finishes. could add a
-    ; Frames check, or rely on nmi break key (also TODO).
-:   cmp VTail       ; nmi will failsafe on a runaway queue.
-    bne :-          ; it might take several frames though.
-    rts
 
 DEF voff, "VOFF" ; ( -- ) to draw directly.
     _ lda VMask, and #$e7, sta VMask ; render off

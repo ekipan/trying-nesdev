@@ -103,7 +103,7 @@ PERIPH = 0# $0-4f: 0 none, 1 joypad, $23 basic keyboard
 #    #BLOCK:    type = bss, load = P2, start = $400; # 1k
 #    #OAM:      type = bss, load = P60; # 256b
 # # cpu rom:
-#     DICT:     type = ro, load = PG0, start = $8000;
+#    #DICT:     type = ro, load = PG0, start = $8000;
 #    #SAMPLES:  type = ro, load = PG0, align = $400;
 #     CODE:     type = ro, load = PGK;
 #     RODATA:   type = ro, load = PGK, align = $100;
