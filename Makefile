@@ -13,19 +13,19 @@ MESEN ?= Mesen ## NES emulator with debugging features.
 #:
 ## Build targets:
 
-LDIN = o/0-link.cfg o/main.o o/fat.o
-LDOPT = --dbgfile $@.dbg -Ln $@.lbl -m $@.map
-
-o/ff.nes: $(LDIN) | o ## (default)
-	$(LD65) $(LDOPT) -o $@ -C $^
-
+LDIN ?= o/0-link.cfg o/main.o o/fat.o
+LDOPT ?= --dbgfile $@.dbg -Ln $@.lbl -m $@.map
+CAOPT ?= -g -l $@.lst
 CART = -D MAPPER=$(MAPPER) -D MIRROR=$(MIRROR) \
 -D PROM=$(PROM) -D PWRAM=$(PWRAM) -D PSRAM=$(PSRAM) \
 -D CROM=$(CROM) -D CWRAM=$(CWRAM) -D CSRAM=$(CSRAM) \
--D PERIPH=$(PERIPH)
+-D PERIPH=$(PERIPH) # cartridge configuration (below).
+
+o/ff.nes: $(LDIN) | o ## (default)
+	$(LD65) -o $@ -C $^  $(LDOPT)
 
 o/%.o: %.s | o        # code and data.
-	$(CA65) $(CART) -g -l $@.lst -o $@ $<
+	$(CA65) -o $@ $<  $(CAOPT) $(CART)
 
 o/0-%: Makefile | o   # embedded in Makefile.
 	awk '/^#$(@:o/%=%)/,/^$$/' $< | sed '1d; s/^# //' >$@
