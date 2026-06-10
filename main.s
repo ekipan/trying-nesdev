@@ -210,10 +210,10 @@ VTail:   .res 1 ; 3) nmi interprets and moves fwd.
 ; wrap in memory that won't usually be literally true.
 
 .segment "ZEROPAGE" ; nmi/main communication:
-VCtrl:  .res 1 ; \ shadow registers.
-VMask:  .res 1 ; | updates show up next
-VSclX:  .res 1 ; | frame, risk of data
-VSclY:  .res 1 ; / races.
+VCtrl:  .res 1 ; \ shadow registers. sent next draw, except
+VMask:  .res 1 ; | VCtrl.7 ignored: nmi is kept enabled.
+VSclX:  .res 1 ; | careful of data races. for synchronous
+VSclY:  .res 1 ; / drawing: 0->VMask, vsync, inc Mutex.
 V:      .res 3 ; draw scratch, can't touch W in nmi.
 OamPg:  .res 1 ; if sprites enabled.
 PalPg:  .res 1 ; 0 to skip, clears after upload.
