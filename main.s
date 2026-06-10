@@ -62,7 +62,7 @@ DEF plus, "+" ; ( n1 n0 -- n1+n0 ) addition.
 ; https://lira.kraamwinkel.be/articles/nes_keyboard
 ; not much here yet. experimenting.
 
-.segment "ZEROPAGE"
+.segment "ZEROPAGE" ; TODO move scanbufs out of zeropage
 KbScan:  .res 9 ; 0 = unheld, 1 = held
 KbPress: .res 9 ; 0 = no change, 1 = went down
 K:       .res 2 ; scratch
@@ -94,18 +94,19 @@ kb_scan:
     _ and #$0f, ora K  ;  5c 10c  %kkkkkkkk
     eor #$ff           ;  2c 12c  1 = curr held
     sta KbScan,y       ;  5c 17c
-    eor #$ff           ;  2c 19c  1 = curr unheld
-    and KbPress,y      ;  4c 23c  1 = curr unheld & prev held
-    eor #$ff           ;  2c 25c  1 = curr held & prev unheld
-    sta KbPress,y      ;  5c 30c  i.e. pressed
-    _ tya, beq @done   ;  4c 34c
-    _ dey, nop, jmp :- ;  7c 41c -> : 4c+5c 50c
-@wait_36c:
+    lda KbPress,y      ;  4c 21c  1 = prev held
+    eor #$ff           ;  2c 23c  1 = prev unheld
+    and KbScan,y       ;  4c 27c  1 = prev unheld & curr held
+    sta KbPress,y      ;  5c 32c  i.e. pressed
+    _ nop, nop         ;  4c 36c
+    _ dey, bpl :-      ;  5c 41c -> : 4c+5c 50c  more rows?
+    ; TODO scan the press events and push to a keys buffer.
+    rts
+@wait_36c:        ; (6c jsr to get here)
     jsr @wait_12c ; 12c
     jsr @wait_12c ; 12c
-@wait_12c:
-@done:
-    rts ; 6c (+6c jsr to get here)
+@wait_12c:        ; (6c jsr)
+    rts           ;  6c
 
 ; VIDEO DRIVER ----------------------------------------------
 
@@ -414,7 +415,7 @@ nmi: ; 2270c deadline to finish drawing
     inc Frames ; notify main a vblank happened.
     jsr draw   ; store 1 in Mutex and process queue.
     ; TODO poll Joy1? sound?
-    jsr kb_scan ; 1205c, 10.6 scanlines
+    jsr kb_scan ; >1200c, 10.6 scanlines
     _ lda #0, sta Mutex ; unlock next frame
 :   _ pla, tay, pla, rti
 
