@@ -130,6 +130,7 @@ draw: ; ~2240c left after nmi prologue.
     ; restore main's configured drawing mode, vblank willing:
     _ lda VCtrl, ora #$80, sta PpuCtrl
     ; https://www.nesdev.org/wiki/PPU_scrolling#Frequent_pitfalls
+    bit PpuStatus
     _ lda VSclX, sta PpuScroll ; shares PpuAddr register,
     _ lda VSclY, sta PpuScroll ; must set *after* draw.
     ; restore invariant: caller can unlock with dec Mutex.
