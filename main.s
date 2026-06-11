@@ -24,6 +24,73 @@
 
 ; MEMORY MAP ------------------------------------------------
 
+.zeropage ; $00-ff system state.
+
+; registers:
+;   x    parameter stack offset: $e0-ff or 0 (empty).
+;   y/a  scratch, often: y=[H], a=[L].
+
+; forth variables:
+     .res 32
+L:   .res 32 ; \ push-down, x-indexed, split parameter stack
+H:           ; / to pass data between words. depth 1: x = $ff.
+; overflow wraps to top of zeropage, underflow corrupts W:
+W:   .res 2  ; six bytes of scratch, including:
+Dst: .res 2  ; \ pointers for y-indexed
+Src: .res 2  ; / transfer of multiple bytes.
+; planned: Base, Here, Latest, Pending, InPtr, InEnd.
+
+; interrupt routine scratch space:
+V: .res 3 ; draw.
+K: .res 2 ; keyboard scanner.
+
+; global configuration:
+Config: .res 1 ; %inxxxxxp  custom irq/nmi, upload palettes.
+; after palette upload, draw resets Config.0.
+Nmi:    .res 2 ; \ handler routine pointers. set Config
+Irq:    .res 2 ; / to 0 first to update atomically.
+Frames: .res 1 ; counter for synching or delaying.
+Mutex:  .res 1 ; nonzero: nmi locked, plus draw tally.
+; a degenerate draw queue eventually tallies Mutex to 128+,
+; the draw interpreter abandons, nmi recovers. TODO xref
+
+; video driver:
+VCtrl:  .res 1 ; \ shadow registers. sent next draw, except
+VMask:  .res 1 ; | VCtrl.7 ignored: nmi is kept enabled.
+VSclX:  .res 1 ; | careful of data races. for synchronous
+VSclY:  .res 1 ; / drawing: 0->VMask, vsync, inc Mutex.
+; $0-ff VCmds draw queue indices:
+VHead:   .res 1 ; 1) main appends commands here.
+VCommit: .res 1 ; 2) main moves this fwd to publish to draw.
+VTail:   .res 1 ; 3) draw interprets and moves fwd.
+; conceptually tail <= commit <= head, though since they
+; wrap in memory that'll often not be literally true.
+
+; VCmds encodings:
+; $0-3f: set PpuAddr. other opcodes far away so overflowed
+;        addresses are less likely to be misinterpreted:
+VHoriz = $a0 ; \ reset/set increment mode
+VVert =  $a1 ; / bit PpuCtrl.1 (+1/32)
+VSend =  $a2 ; args: len val1 val2 val3 ...
+VFill =  $a3 ; args: len val
+VMove =  $a4 ; args: len addrh addrl
+VPace =  $a5 ; stop drawing until next frame
+; unknown opcodes dump the queue: resetting head to commit.
+
+; tty driver:
+CsrCol: .res 1 ; 0-31, width of screen.
+CsrRow: .res 1 ; 0-253, except seam rows 30,31,62,63 etc
+; vaddr calc drops CsrRow.6-7, so effectively 0-29,32-61.
+; last two columns are in overscan caution zone.
+; https://www.nesdev.org/wiki/Overscan
+; TODO reconsider design, might fix CsrRow in 0-59 instead.
+
+.bss ; $200-7ff scratch buffers on mainboard.
+
+Oam:   .res 256  ; sprites data, at $200 conventionally.
+VCmds: .res 256  ; encoded drawing commands queue.
+       .res 1024 ; (planned location of forth block buffer.)
+
 .data ; $6000-60ff scratch buffers on cart.
 
 Palette: .res 32 ; to upload to ppu.
@@ -36,68 +103,14 @@ KbDown:  .res 9 ; precomputed down-edges Prev->Held.
 ; source form, via forth's BLOCK mechanism (once implemented),
 ; recompiled on-the-fly.
 
-.bss ; $200-7ff scratch buffers on mainboard.
-
-Oam:   .res 256  ; sprites data, at $200 conventionally.
-VCmds: .res 256  ; encoded drawing commands queue.
-       .res 1024 ; (planned location of forth block buffer.)
-
-.zeropage ; $00-ff system state.
-
-; registers:
-;   x    param stack depth,
-;   y/a  scratch, often: y=[H], a=[L].
-
-; forth variables.
-     .res 32
-L:   .res 32 ; \ push-down, x-indexed, split parameter stack
-H:           ; / to pass data between words. depth 1: x = $ff.
-W:   .res 2  ; then six bytes of scratch, including:
-Dst: .res 2  ; \ pointers for y-indexed
-Src: .res 2  ; / transfer of multiple bytes.
-; planned: Base, Here, Latest, Pending, InPtr, InEnd.
-
-; interrupt routine scratch space.
-V: .res 3 ; draw.
-K: .res 2 ; keyboard scanner.
-
-; global configuration:
-Config: .res 1 ; %inxxxxxp  custom irq/nmi, upload palettes.
-Nmi:    .res 2 ; \ handler routine pointers. set Config
-Irq:    .res 2 ; / to 0 first to update atomically.
-; after palette upload, draw resets Config.0.
-
-; video driver:
-Mutex:  .res 1 ; nonzero: nmi locked, plus draw tally.
-; a degenerate draw queue eventually tallies Mutex to 128+,
-; the draw interpreter abandons, nmi recovers. TODO xref
-Frames: .res 1 ; counter for synching or delaying.
-VCtrl:  .res 1 ; \ shadow registers. sent next draw, except
-VMask:  .res 1 ; | VCtrl.7 ignored: nmi is kept enabled.
-VSclX:  .res 1 ; | careful of data races. for synchronous
-VSclY:  .res 1 ; / drawing: 0->VMask, vsync, inc Mutex.
-; $0-ff VCmds queue indices:
-VHead:   .res 1 ; 1) main appends commands here.
-VCommit: .res 1 ; 2) main moves this fwd to publish to draw.
-VTail:   .res 1 ; 3) draw interprets and moves fwd.
-; conceptually tail <= commit <= head, though since they
-; wrap in memory that'll often not be literally true.
-
-; tty driver:
-CsrCol: .res 1 ; 0-31, width of screen.
-CsrRow: .res 1 ; 0-253, except seam rows 30,31,62,63 etc
-; vaddr calc drops CsrRow.6-7, so effectively 0-29,32-61.
-; last two columns are in overscan caution zone.
-; https://www.nesdev.org/wiki/Overscan
-; TODO reconsider design, might fix CsrRow in 0-59 instead.
-
 ; current plans for rom space:
-;
+
 ; $8000-bfff
-;     rom dictionary, then blocks of help text, sample code,
-;     etc. ideally extra banks, copied into $400 buffer.
+;   rom dictionary, then blocks of help text, sample code,
+;   etc. ideally extra banks, copied into $400 buffer.
+
 ; $c000-ffff
-;     nes hardware drivers and forth kernel.
+;   nes hardware drivers and forth kernel.
 
 .code ; FORTH -----------------------------------------------
 
@@ -196,16 +209,6 @@ PpuScroll = $2005 ; send x then y \ touch PpuStatus
 PpuAddr =   $2006 ; addrh, addrl  / to reset order latch
 PpuData =   $2007 ; increments by 1 or 32 (PpuCtrl vert)
 OamDma =    $4014 ; (cpu) page to transfer to ppu
-
-; VCmds encodings:
-; $0-3f: set PpuAddr, other opcodes far away so it's less
-; likely overflowed addresses will be misinterpreted:
-VHoriz = $a0 ; \ reset/set increment mode
-VVert =  $a1 ; / bit PpuCtrl.1 (+1/32)
-VSend =  $a2 ; args: len val1 val2 val3 ...
-VFill =  $a3 ; args: len val
-VMove =  $a4 ; args: len addrh addrl
-VPace =  $a5 ; stop drawing until next frame
 
 draw: ; ~2240c left after nmi prologue.
     _ lda #1, sta Mutex ; lock nmi for synch'd draw in main.
