@@ -26,7 +26,7 @@
 
 .data ; $6000-60ff scratch buffers on cart.
 
-;Palette: .res 32 ; to upload to ppu.
+Palette: .res 32 ; to upload to ppu.
 KbPrev:  .res 9 ; \ 72 bits array of scanned keystates.
 KbHeld:  .res 9 ; / 0 = unheld, 1 = held.
 KbDown:  .res 9 ; precomputed down-edges Prev->Held.
@@ -38,7 +38,7 @@ KbDown:  .res 9 ; precomputed down-edges Prev->Held.
 
 .bss ; $200-7ff scratch buffers on mainboard.
 
-;Oam:   .res 256  ; sprites data, at $200 conventionally.
+Oam:   .res 256  ; sprites data, at $200 conventionally.
 VCmds: .res 256  ; encoded drawing commands queue.
        .res 1024 ; (planned location of forth block buffer.)
 
@@ -62,17 +62,16 @@ V: .res 3 ; draw.
 K: .res 2 ; keyboard scanner.
 
 ; global configuration:
-Custom: .res 1 ; custom handlers: $80 nmi, $40 irq
-Nmi:    .res 2 ; \ handler routine pointers. set Custom
+Config: .res 1 ; %inxxxxxp  custom irq/nmi, upload palettes.
+Nmi:    .res 2 ; \ handler routine pointers. set Config
 Irq:    .res 2 ; / to 0 first to update atomically.
+; after palette upload, draw resets Config.0.
 
 ; video driver:
-Frames: .res 1 ; counter for synching or delaying.
 Mutex:  .res 1 ; nonzero: nmi locked, plus draw tally.
-OamPg:  .res 1 ; if sprites enabled.
-PalPg:  .res 1 ; 0 to skip, clears after upload.
 ; a degenerate draw queue eventually tallies Mutex to 128+,
 ; the draw interpreter abandons, nmi recovers. TODO xref
+Frames: .res 1 ; counter for synching or delaying.
 VCtrl:  .res 1 ; \ shadow registers. sent next draw, except
 VMask:  .res 1 ; | VCtrl.7 ignored: nmi is kept enabled.
 VSclX:  .res 1 ; | careful of data races. for synchronous
@@ -82,7 +81,7 @@ VHead:   .res 1 ; 1) main appends commands here.
 VCommit: .res 1 ; 2) main moves this fwd to publish to draw.
 VTail:   .res 1 ; 3) draw interprets and moves fwd.
 ; conceptually tail <= commit <= head, though since they
-; wrap in memory that won't usually be literally true.
+; wrap in memory that'll often not be literally true.
 
 ; tty driver:
 CsrCol: .res 1 ; 0-31, width of screen.
@@ -90,6 +89,7 @@ CsrRow: .res 1 ; 0-253, except seam rows 30,31,62,63 etc
 ; vaddr calc drops CsrRow.6-7, so effectively 0-29,32-61.
 ; last two columns are in overscan caution zone.
 ; https://www.nesdev.org/wiki/Overscan
+; TODO reconsider design, might fix CsrRow in 0-59 instead.
 
 ; current plans for rom space:
 ;
@@ -212,14 +212,13 @@ draw: ; ~2240c left after nmi prologue.
     _ lda VMask, sta PpuMask ; bg/sprites on/off
     _ and #$10, beq :+ ; sprites disabled? -> skip dma
     _ lda #$00, sta OamAddr ; \ costs
-    _ lda OamPg, sta OamDma ; / 521c
+    _ lda Oam, sta OamDma   ; / 521c
 :   ; load palette:
-    _ lda PalPg, beq :++ ; palette unchanged?
-    _ ldy #$00, sta V+1, sty V, sty PalPg ; take ptr
-    _ sty PpuCtrl ; horizontal mode
-    _ lda #$3f, sta PpuAddr, sty PpuAddr ; $3f00-3f1f
-:   lda (V),y   ; \ txfer     6c \ 17c * 32 = 544c
-    sta PpuData ; / byte      4c | TODO unroll? fixed addr?
+    _ lda #1, and Config, beq :++ ; upload palette?
+    _ lda #$3f, ldy #0, sta PpuAddr, sty PpuAddr ; $3f00-3f1f
+    _ sty PpuCtrl, dec Config ; horiz mode, clear flag, upload:
+:   lda Palette,y ; \ txfer   4c \ 15c * 32 = 480c
+    sta PpuData   ; / byte    4c | TODO unroll?
     _ iny, cpy #$20, bne :- ; 7c / +138 bytes -160 cycles
 :   ; save pstack, interpret draw commands, advance tail:
     _ txa, pha, ldx VTail, jsr @horiz, stx VTail, pla, tax
@@ -326,40 +325,41 @@ vsync: ; ( -- ) wait for next vblank.
 .rodata ; TTY DRIVER ----------------------------------------
 
 RomPalette:
-    .align 256
     .repeat 8
         .byte $0F, $29, $17, $20
     .endrepeat
 
 .code
 
-; nw ntb0 -> [ $2000-23ff ][ $2400-27ff ] <- ne ntb1  \ 1k
-; sw ntb2 -> [ $2800-2bff ][ $2c00-2fff ] <- se ntb3  / each
-;
-; [^2] most carts map nametables 0-3 to the ppu internal 2k,
-; mirroring either horizontally or vertically. ntb1 and 2 are
-; contiguous in memory and pair with both configurations.
-
 page: ; ( -- ) init and clear the screen.
     ; called on reset, must enable nmi directly! but *also*
     ; must be callable during normal interpreter use. ~0.6f.
-    _ lda #$01, sta Mutex
-    _ lda #$00, sta Custom, sta VMask ; default nmi, render off.
-    _ sta CsrRow, sta CsrCol, sta VSclY ; TODO compute y.
-    _ lda #$f8, sta VSclX ; left edge inside overscan.
-    _ lda #>RomPalette, sta PalPg ; default palette.
+    _ ldy #32, lda #1, sta Mutex, sta Config ; upload palette:
+:   lda RomPalette,y ; copy initial palette
+    sta Palette,y    ; to ram buffer.
+    _ dey, bpl :-
+    _ lda #0, sta VMask, sta CsrRow, sta CsrCol, sta VSclY
+    _ lda #$f8, sta VSclX ; inside overscan, TODO compute y.
     _ lda VCommit, sta VTail, sta VHead ; delete the queue.
     _ lda #$80, sta VCtrl, sta PpuCtrl ; enable nmi.
     jsr vsync ; also frees the Mutex.
+    ; clear nametables 1 and 2, see illustration below:
     _ stx W ; save pstack
     _ ldy #$24, lda #$00, bit PpuStatus, sty PpuAddr, sta PpuAddr
-    _ ldy #$08, ldx #$00 ;lda #$00
+    _ ldy #$08, ldx #$00, ;lda #$00
 :   stx PpuData ; TODO test pattern: stx, clear: sta
     _ inx, bne :- ; 256 bytes
-    _ dey, bne :- ; 8 pages = nametables 1+2 $2400-2bff [^2]
+    _ dey, bne :- ; 8 pages = ntb1/2
     _ ldx W ; restore pstack
     _ lda #$0a, sta VMask ; bg on, sprites off
     rts
+
+; nw ntb0 -> [ $2000-23ff ][ $2400-27ff ] <- ne ntb1  \ 1k
+; sw ntb2 -> [ $2800-2bff ][ $2c00-2fff ] <- se ntb3  / each
+;
+; most carts map nametables 0-3 to the ppu internal 2k,
+; mirroring either horizontally or vertically. ntb1 and 2 are
+; contiguous in memory and pair with both configurations.
 
 csr_vaddr: ; put cursor vaddr onto draw queue.
     _ ldy CsrRow, lda CsrCol
@@ -432,18 +432,19 @@ reset: ; just powered on, turn off all the things:
     lda #0
 :   sta $000,x
     sta $100,x
-    sta $200,x ; TODO reserve for oam instead of drawqueue?
+    sta $200,x
     sta $300,x
-    sta $400,x ; TODO block buffer here? leave dirty?
+    sta $400,x
     sta $500,x
     sta $600,x
-    sta $700,x ; TODO wipe page $60?
+    sta $700,x
+    sta $6000,x
     _ inx, bne :-
 :   _ bit PpuStatus, bpl :- ; second frame
     _ jsr page, jmp main ; clear bg, start nmi, start main
 
 nmi: ; 2270c deadline to finish drawing
-    _ bit Custom, bpl :+ ; default nmi service?
+    _ bit Config, bvc :+ ; default nmi service?
     jmp (Nmi) ; no, custom
 :   _ pha, tya, pha ; subroutines responsible for x.
     _ lda Mutex, bne :+ ; re-entered?
@@ -457,7 +458,7 @@ nmi: ; 2270c deadline to finish drawing
 :   _ pla, tay, pla, rti
 
 irq:
-    _ bit Custom, bvc :+
+    _ bit Config, bpl :+
     jmp (Irq)
 :   rti
 
