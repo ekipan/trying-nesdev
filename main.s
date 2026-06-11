@@ -138,9 +138,10 @@ Joy1 = $4016
 Joy2 = $4017
 
 kb_stopscan: ; 98c: flag keys: rshift->bcc, stop->beq.
-    _ lda #5, sta Joy1, jsr wait_12c ; reset to row0, burn.
-    _ lda #6, sta Joy1, jsr wait_50c ; strobe col1, burn.
-    _ lda Joy2, lsr, lsr, lsr, and #2, rts ; nc=shift, z=stop.
+    _ lda #5, sta Joy1, jsr wait_12c ; reset to row 0.
+    _ lda #6, sta Joy1, jsr wait_50c, lda Joy2 ; read col 1.
+kb_flags: ; %xxxsxrxx <- stop and rshift keys.
+    _ lsr, lsr, lsr, and #2, rts ; nc=rshift, z=stop.
 
 kb_fullscan: ; >1200c: scan the entire keyboard.
     ; 9 rows * 2 cols * 4 bits = 72 keys.
@@ -172,7 +173,8 @@ kb_fullscan: ; >1200c: scan the entire keyboard.
     _ nop, nop         ;  4c 36c
     _ dey, bpl :-      ;  5c 41c -> : 4c+5c 50c  more rows?
     ; TODO scan the press events and push to a keys buffer.
-    rts
+    _ lda KbHeld+8, asl, eor #$ff ; restore raw row 0 col 1.
+    jmp kb_flags ; nc=rshift, z=stop.
 
 .code ; VIDEO DRIVER ----------------------------------------
 
@@ -451,9 +453,9 @@ nmi: ; 2270c deadline to finish drawing
     inc Frames ; notify main a vblank happened.
     jsr draw   ; store 1 in Mutex and process queue.
     ; TODO poll Joy1? sound?
-    ; jsr kb_fullscan ; >1200c, 10.6 scanlines
-    _ jsr kb_stopscan, beq reset ; pressed stop?
-    ; TODO branch to interpreter recovery instead.
+    jsr kb_fullscan ; >1200c, 10.6 scanlines
+    ; jsr kb_stopscan ; TODO configurable scan type.
+    beq reset ; pressed stop? TODO recover instead.
     _ lda #0, sta Mutex ; unlock next frame
 :   _ pla, tay, pla, rti
 
