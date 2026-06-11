@@ -391,25 +391,25 @@ _ DmcFreq = $4010, Joy1 = $4016, Joy2 = $4017
 
 reset: ; just powered on, turn off all the things:
     _ sei, cld ; irq, decimal mode
+    _ ldx #$ff, txs ; clear return stack
     _ ldx #$40, stx Joy2 ; sound, and screen:
     _ ldx #$00, stx DmcFreq, stx PpuCtrl, stx PpuMask
-    ; wait 2 frames for ppu, init ram in the meantime:
-    bit PpuStatus
-:   _ bit PpuStatus, bpl :- ; first frame
+    ; TODO init banks?
+    ; wait 2 frames for ppu, init ram in the meantime.
     ; banging the PpuStatus vblank bit risks a missed frame.
     ; needed for reset but runtime will track via Frames.
+    bit PpuStatus
+:   _ bit PpuStatus, bpl :- ; first frame
     lda #0
 :   sta $000,x
     sta $100,x
-    sta $200,x
+    sta $200,x ; TODO reserve for oam instead of drawqueue?
     sta $300,x
-    sta $400,x ; TODO (block buffer here? leave dirty?)
+    sta $400,x ; TODO block buffer here? leave dirty?
     sta $500,x
     sta $600,x
     sta $700,x ; TODO wipe page $60?
     _ inx, bne :-
-    _ ldx #$ff, txs, inx ; clear both forth stacks
-    ; TODO init banks?
 :   _ bit PpuStatus, bpl :- ; second frame
     _ jsr page, jmp main ; clear bg, start nmi, start main
 
