@@ -280,9 +280,8 @@ a_to_v:
 DEF vcommit, "VCOMMIT" ; ( -- ) send queued draw commands.
     _ lda VHead, sta VCommit, rts
 
-DEF voff, "VOFF" ; ( -- ) to draw directly.
-    _ lda VMask, and #$e7, sta VMask ; render off
 DEF vsync, "VSYNC" ; ( -- ) wait for next vblank.
+    _ lda #0, sta Mutex ; TODO stash and restore?
     lda Frames
 :   _ cmp Frames, beq :-
     rts
@@ -312,17 +311,16 @@ CsrRow: .res 1 ; 0-253, except seam rows 30,31,62,63 etc
 
 .segment "CODE"
 DEF page, "PAGE" ; ( -- ) init and clear the screen.
-    ; called on reset, must enable nmi directly! [^1]
-    ; synchronous, ~0.6f.
-    ; attempt to recover bad queue/mutex, very racey:
-    _ lda VCommit, sta VTail, sta VHead ; delete the queue
-    _ lda #$00, sta Mutex ; unlock nmi (paranoid)
-    _ lda #$80, ora VCtrl, sta PpuCtrl ; [^1] enable nmi
-    jsr voff
-    _ lda #$00, sta CsrRow, sta CsrCol
-    sta VSclY ; TODO compute from row
-    _ lda #$f8, sta VSclX ; left edge inside overscan
-    _ lda #>RomPalette, sta PalPg ; default palette
+    ; called on reset, must enable nmi directly! but *also*
+    ; must be callable during normal interpreter use. ~0.6f.
+    _ lda #$01, sta Mutex
+    _ lda #$00, sta Custom, sta VMask ; default nmi, render off.
+    _ sta CsrRow, sta CsrCol, sta VSclY ; TODO compute y.
+    _ lda #$f8, sta VSclX ; left edge inside overscan.
+    _ lda #>RomPalette, sta PalPg ; default palette.
+    _ lda VCommit, sta VTail, sta VHead ; delete the queue.
+    _ lda #$80, sta VCtrl, sta PpuCtrl ; enable nmi.
+    jsr vsync ; also frees the Mutex.
     _ stx W ; save pstack
     _ ldy #$24, lda #$00, bit PpuStatus, sty PpuAddr, sta PpuAddr
     _ ldy #$08, ldx #$00 ;lda #$00
