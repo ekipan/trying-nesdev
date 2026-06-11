@@ -21,6 +21,10 @@
 .endmacro  ; eg: _ jsr foo, jsr bar, jmp qux
 ; rule: loads at start, 0/1 branches at end.
 
+; it does break the debugger's source view but I've found
+; Mesen's disassembly view to be sufficient for my needs.
+; might reconsider if it becomes a problem. dense code ahead.
+
 .segment "PSTACK": zp ; registers: x param stack depth,
      .res 32          ;  y/a scratch, often: y=[H], a=[L].
 L:   .res 32 ; \ push-down, x-indexed, split parameter stack
@@ -78,7 +82,7 @@ kb_stopscan: ; 98c: flag keys: rshift->bcc, stop->beq.
 
 kb_fullscan: ; >1200c: scan the entire keyboard.
     ; 9 rows * 2 cols * 4 bits = 72 keys.
-    _ lda #5, sta Joy1 ; reset keyboard to row 0, col 0.
+    _ lda #5, sta Joy1 ; reset keyboard to row 0.
     jsr wait_12c
     _ lda #4, sta Joy1 ; strobe column 0. wait 50c:
     ; interleave work while waiting for the matrix to settle:
@@ -111,10 +115,13 @@ kb_fullscan: ; >1200c: scan the entire keyboard.
 ; VIDEO DRIVER ----------------------------------------------
 
 ; https://www.nesdev.org/wiki/PPU
-; https://github.com/bbbradsmith/NES-ca65-example
 ; the picture processing unit rejects i/o while drawing the
 ; screen, draw commands must be sent during 2270c vblank, so
 ; I encode them into a ring buffer to send asynchronously.
+;
+; https://github.com/bbbradsmith/NES-ca65-example
+; /blob/1bb961dcdf317f39460c0c28a13f33a82feb29c4/example.s#L200-L232
+; design grown out from this, do refer to it!
 
 .segment "QUEUE"
      .align 256 ; page-aligned so indices wrap.
@@ -174,7 +181,7 @@ draw: ; ~2240c left after nmi prologue.
     _ sty PpuCtrl ; horizontal mode
     _ lda #$3f, sta PpuAddr, sty PpuAddr ; $3f00-3f1f
 :   lda (V),y   ; \ txfer     6c \ 17c * 32 = 544c
-    sta PpuData ; / byte      4c | TODO unroll?
+    sta PpuData ; / byte      4c | TODO unroll? fixed addr?
     _ iny, cpy #$20, bne :- ; 7c / +138 bytes -160 cycles
 :   ; save pstack, interpret draw commands, advance tail:
     _ txa, pha, ldx VTail, jsr @horiz, stx VTail, pla, tax
