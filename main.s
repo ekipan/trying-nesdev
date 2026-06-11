@@ -2,12 +2,15 @@
 ; experiments and studies towards a family forth.
 ; just a noninteractive scrolling demo so far (TODO).
 ; a goal is to port <https://github.com/ekipan/sss> to it.
+; lots of TODOs are design tradeoffs I need to consider.
 ;
 ; to jump around, grep for:
-; /code_label:/ /DEF forth_code_label/ /"FORTH-WORD"/
-; /DataLabel:/ /ConstantLabel =/ /MACRO /
+; /code_label:/ /DataLabel:/ /ConstantLabel =/
 
-; MACROS ----------------------------------------------------
+; PRELIM ----------------------------------------------------
+
+; plans: macros, then forth core, then pull to separate files:
+; maybe core.s stack/math/memory, ui.s interpreter/compiler.
 
 ; time for a bad first impression! code *should* be dense:
 .macro _ I,J,K,L,M,N,O,P ; list of instructions.
@@ -17,17 +20,6 @@
     .endif ; eg: _ pha, txa, pha, tya, pha
 .endmacro  ; eg: _ jsr foo, jsr bar, jmp qux
 ; rule: loads at start, 0/1 branches at end.
-
-; inserted opcodes overlap and skip next instruction:
-.define JMP1 .byte $24 ; bit zp  ; 1 operand byte
-.define JMP2 .byte $2C ; bit abs ; 2 operand bytes
-; to save code versus a jmp over another entrypoint.
-
-.macro DEF XT, NAME, FLAGS ; (TODO assemble dictionary)
-    XT:
-.endmacro ; eg: DEF foo, "FOO" ; ( a -- b ) does foo.
-
-; CORE ------------------------------------------------------
 
 .segment "PSTACK": zp ; registers: x param stack depth,
      .res 32          ;  y/a scratch, often: y=[H], a=[L].
@@ -45,7 +37,7 @@ put_ya:
     sta L,x
     rts
 
-DEF plus, "+" ; ( n1 n0 -- n1+n0 ) addition.
+plus: ; ( n1 n0 -- n1+n0 ) addition.
     clc
     lda L+0,x
     adc L+1,x
@@ -264,10 +256,10 @@ draw: ; ~2240c left after nmi prologue.
 
 ; sending, synching:
 
-DEF to_v, ">V" ; ( addr -- ) append address to queue.
+to_v: ; ( addr -- ) append address to queue.
     Lda H,x         ; queue expects big-endian!
     jsr a_to_v
-DEF c_to_v, "C>V" ; ( c -- ) append byte to queue.
+c_to_v: ; ( c -- ) append byte to queue.
     lda L,x
     inx
 a_to_v:
@@ -277,10 +269,10 @@ a_to_v:
     sty VHead
     rts
 
-DEF vcommit, "VCOMMIT" ; ( -- ) send queued draw commands.
+vcommit: ; ( -- ) send queued draw commands.
     _ lda VHead, sta VCommit, rts
 
-DEF vsync, "VSYNC" ; ( -- ) wait for next vblank.
+vsync: ; ( -- ) wait for next vblank.
     _ lda #0, sta Mutex ; TODO stash and restore?
     lda Frames
 :   _ cmp Frames, beq :-
@@ -310,7 +302,7 @@ CsrRow: .res 1 ; 0-253, except seam rows 30,31,62,63 etc
 ; contiguous in memory and pair with both configurations.
 
 .segment "CODE"
-DEF page, "PAGE" ; ( -- ) init and clear the screen.
+page: ; ( -- ) init and clear the screen.
     ; called on reset, must enable nmi directly! but *also*
     ; must be callable during normal interpreter use. ~0.6f.
     _ lda #$01, sta Mutex
@@ -342,7 +334,7 @@ ya_vaddr:
     _ ldy #$24, lda #$00, jsr push_ya ; ( offset base )
     _ jsr plus, jmp to_v
 
-DEF rawemit, "RAWEMIT" ; ( c -- ) display a character.
+rawemit: ; ( c -- ) display a character.
     _ jsr csr_vaddr, inc CsrCol
     _ lda CsrCol, cmp #32, bcc :+ ; still on screen?
     jsr cr ; no: go to next line
@@ -350,7 +342,7 @@ DEF rawemit, "RAWEMIT" ; ( c -- ) display a character.
     lda L,x                        ; stack-taken
     _ inx, jsr a_to_v, jmp vcommit ; character
 
-DEF cr, "CR" ; ( -- ) move the cursor to the start of next line.
+cr: ; ( -- ) move the cursor to the start of next line.
     _ lda #VPace, jsr a_to_v ; 64b is risky, pace before/after.
     _ lda #$00, sta CsrCol   ; col = 0, increment row:
     _ ldy CsrRow, jsr @iny, sty CsrRow, jsr @clear ; and clear.
