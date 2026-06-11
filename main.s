@@ -1,8 +1,7 @@
 
 ; experiments and studies towards a family forth.
-; just a noninteractive scrolling demo so far (TODO).
 ; a goal is to port <https://github.com/ekipan/sss> to it.
-; lots of TODOs are design tradeoffs I need to consider.
+; lots of TODO design tradeoffs to consider.
 ;
 ; to jump around, grep for:
 ; /code_label:/ /DataLabel:/ /ConstantLabel =/
@@ -21,6 +20,16 @@
 ; might reconsider if it becomes a problem. dense code ahead.
 
 ; more macros planned: dict assembly, more shenanigans.
+
+.segment "INES" ; see Makefile for cart config defines:
+
+; https://www.nesdev.org/wiki/NES_2.0
+.byte "NES", $1a, PROM&255, CROM&255 ; 0-5
+.byte ((MAPPER&$f)<<4) | ((PSRAM+CSRAM>0)<<1) | MIRROR ; 6
+.byte ((MAPPER>>4)&$f) | 8 ; 7: hw nes, binfmt nes2.0
+.byte (MAPPER>>8), ((PROM>>4)&$f0)|(CROM>>8)&$f ; 8-9
+.byte (PSRAM<<4)|PWRAM, (CSRAM<<4)|CWRAM ; 10-11
+.byte 0, 0, 0, PERIPH ; 12-15
 
 ; MEMORY MAP ------------------------------------------------
 
@@ -112,28 +121,6 @@ KbDown:  .res 9 ; precomputed down-edges Prev->Held.
 ; $c000-ffff
 ;   nes hardware drivers and forth kernel.
 
-.code ; FORTH -----------------------------------------------
-
-; planned: core.s stack/math/memory, ui.s interpreter/compiler.
-
-push_ya: ; push/put_ya/na/a for assembly literals.
-    dex
-put_ya:
-    sty H,x
-    sta L,x
-    rts
-
-plus: ; ( n1 n0 -- n1+n0 ) addition.
-    clc
-    lda L+0,x
-    adc L+1,x
-    sta L+1,x
-    lda H+0,x
-    adc H+1,x
-    sta H+1,x
-    inx
-    rts
-
 .code ; KB DRIVER -------------------------------------------
 
 ; https://www.nesdev.org/wiki/Family_BASIC_Keyboard#Usage
@@ -196,8 +183,7 @@ kb_fullscan: ; >1200c: scan the entire keyboard.
 ; screen, draw commands must be sent during 2270c vblank, so
 ; I encode them into a ring buffer to send asynchronously.
 ;
-; https://github.com/bbbradsmith/NES-ca65-example
-; /blob/1bb961dcdf317f39460c0c28a13f33a82feb29c4/example.s#L200-L232
+; https://github.com/bbbradsmith/NES-ca65-example/blob/1bb961dcdf317f39460c0c28a13f33a82feb29c4/example.s#L200-L232
 ; design grown out from this, do refer to it!
 
 ; https://www.nesdev.org/wiki/PPU_registers
@@ -327,37 +313,7 @@ vsync: ; ( -- ) wait for next vblank.
 :   _ cmp Frames, beq :-
     rts
 
-.rodata ; TTY DRIVER ----------------------------------------
-
-RomPalette:
-    .repeat 8
-        .byte $0F, $29, $17, $20
-    .endrepeat
-
-.code
-
-page: ; ( -- ) init and clear the screen.
-    ; called on reset, must enable nmi directly! but *also*
-    ; must be callable during normal interpreter use. ~0.6f.
-    _ ldy #32, lda #1, sta Mutex, sta Config ; upload palette:
-:   lda RomPalette,y ; copy initial palette
-    sta Palette,y    ; to ram buffer.
-    _ dey, bpl :-
-    _ lda #0, sta VMask, sta CsrRow, sta CsrCol, sta VSclY
-    _ lda #$f8, sta VSclX ; inside overscan, TODO compute y.
-    _ lda VCommit, sta VTail, sta VHead ; delete the queue.
-    _ lda #$80, sta VCtrl, sta PpuCtrl ; enable nmi.
-    jsr vsync ; also frees the Mutex.
-    ; clear nametables 1 and 2, see illustration below:
-    _ stx W ; save pstack
-    _ ldy #$24, lda #$00, bit PpuStatus, sty PpuAddr, sta PpuAddr
-    _ ldy #$08, ldx #$00, ;lda #$00
-:   stx PpuData ; TODO test pattern: stx, clear: sta
-    _ inx, bne :- ; 256 bytes
-    _ dey, bne :- ; 8 pages = ntb1/2
-    _ ldx W ; restore pstack
-    _ lda #$0a, sta VMask ; bg on, sprites off
-    rts
+.code ; TTY DRIVER ----------------------------------------
 
 ; nw ntb0 -> [ $2000-23ff ][ $2400-27ff ] <- ne ntb1  \ 1k
 ; sw ntb2 -> [ $2800-2bff ][ $2c00-2fff ] <- se ntb3  / each
@@ -402,24 +358,37 @@ cr: ; ( -- ) move the cursor to the start of next line.
     _ lda #32, jsr a_to_v    ; an entire row
     _ lda #' ', jmp a_to_v   ; with spaces
 
-.code ; MAIN ------------------------------------------------
-
-main:
-    _ lda #1, jsr add_y, jsr vsync, jmp main
-
-add_y: ; scly += a, [-16..16] for correct seam jump.
-    clc
-    adc VSclY
-    tay
-    cmp #$f0
-    bcc :+    ; not between screens?
-    sbc #$f0  ; a = a-240-(1-c)
-    tay
-    lda #2
-    eor VCtrl ; flip
-    sta VCtrl ; ntbl \ data
-:   sty VSclY ;      / race 3c
+page: ; ( -- ) init and clear the screen.
+    ; called on reset, must enable nmi directly! but *also*
+    ; must be callable during normal interpreter use. ~0.6f.
+    _ ldy #32, lda #1, sta Mutex, sta Config ; upload palette:
+:   lda RomPalette,y ; copy initial palette
+    sta Palette,y    ; to ram buffer.
+    _ dey, bpl :-
+    _ lda #0, sta VMask, sta CsrRow, sta CsrCol, sta VSclY
+    _ lda #$f8, sta VSclX ; inside overscan, TODO compute y.
+    _ lda VCommit, sta VTail, sta VHead ; delete the queue.
+    _ lda #$80, sta VCtrl, sta PpuCtrl ; enable nmi.
+    jsr vsync ; also frees the Mutex.
+    ; clear nametables 1 and 2, see illustration below:
+    _ stx W ; save pstack
+    _ ldy #$24, lda #$00, bit PpuStatus, sty PpuAddr, sta PpuAddr
+    _ ldy #$08, ldx #$00, ;lda #$00
+:   stx PpuData ; TODO test pattern: stx, clear: sta
+    _ inx, bne :- ; 256 bytes
+    _ dey, bne :- ; 8 pages = ntb1/2
+    _ ldx W ; restore pstack
+    _ lda #$0a, sta VMask ; bg on, sprites off
     rts
+
+.rodata
+
+RomPalette:
+    .repeat 8
+        .byte $0F, $29, $17, $20
+    .endrepeat
+
+.code ; INTERRUPTS ------------------------------------------
 
 DmcFreq = $4010
 
@@ -437,7 +406,7 @@ reset: ; just powered on, turn off all the things:
     lda #0
 :   sta $000,x
     sta $100,x
-    sta $200,x
+    sta $200,x ; TODO offscreen $ff
     sta $300,x
     sta $400,x
     sta $500,x
@@ -467,18 +436,47 @@ irq:
     jmp (Irq)
 :   rti
 
-; nes hardware and romfile boilerplate:
+.segment "VECTORS" ; nes hardware boilerplate:
 
-.segment "VECTORS"
-    .addr nmi   ; at vblank
-    .addr reset ; at power on and reset
-    .addr irq   ; unused by default
+.addr nmi   ; at vblank
+.addr reset ; at power on and reset
+.addr irq   ; unused by default
 
-; see Makefile for cart configuration defines.
-.segment "INES" ; https://www.nesdev.org/wiki/NES_2.0
-    .byte "NES", $1a, PROM&255, CROM&255 ; 0-5
-    .byte ((MAPPER&$f)<<4) | ((PSRAM+CSRAM>0)<<1) | MIRROR ; 6
-    .byte ((MAPPER>>4)&$f) | 8 ; 7: hw nes, binfmt nes2.0
-    .byte (MAPPER>>8), ((PROM>>4)&$f0)|(CROM>>8)&$f ; 8-9
-    .byte (PSRAM<<4)|PWRAM, (CSRAM<<4)|CWRAM ; 10-11
-    .byte 0, 0, 0, PERIPH ; 12-15
+.code ; FORTH -----------------------------------------------
+
+; planned: core.s stack/math/memory, ui.s interpreter/compiler.
+
+push_ya: ; push/put_ya/na/a for assembly literals.
+    dex
+put_ya:
+    sty H,x
+    sta L,x
+    rts
+
+plus: ; ( n1 n0 -- n1+n0 ) addition.
+    clc
+    lda L+0,x
+    adc L+1,x
+    sta L+1,x
+    lda H+0,x
+    adc H+1,x
+    sta H+1,x
+    inx
+    rts
+
+add_y: ; scly += a, [-16..16] for correct seam jump.
+    clc
+    adc VSclY
+    tay
+    cmp #$f0
+    bcc :+    ; not between screens?
+    sbc #$f0  ; a = a-240-(1-c)
+    tay
+    lda #2
+    eor VCtrl ; flip
+    sta VCtrl ; ntbl \ data
+:   sty VSclY ;      / race 3c
+    rts
+
+main:
+    _ lda #1, jsr add_y, jsr vsync, jmp main
