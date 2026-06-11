@@ -7,11 +7,6 @@
 ; to jump around, grep for:
 ; /code_label:/ /DataLabel:/ /ConstantLabel =/
 
-; PRELIM ----------------------------------------------------
-
-; plans: macros, then forth core, then pull to separate files:
-; maybe core.s stack/math/memory, ui.s interpreter/compiler.
-
 ; time for a bad first impression! code *should* be dense:
 .macro _ I,J,K,L,M,N,O,P ; list of instructions.
     .if .not .blank({I}) ; up to 8:
@@ -25,15 +20,89 @@
 ; Mesen's disassembly view to be sufficient for my needs.
 ; might reconsider if it becomes a problem. dense code ahead.
 
-.segment "PSTACK": zp ; registers: x param stack depth,
-     .res 32          ;  y/a scratch, often: y=[H], a=[L].
+; more macros planned: dict assembly, more shenanigans.
+
+; MEMORY MAP ------------------------------------------------
+
+.data ; $6000-60ff scratch buffers on cart.
+
+;Palette: .res 32 ; to upload to ppu.
+KbPrev:  .res 9 ; \ 72 bits array of scanned keystates.
+KbHeld:  .res 9 ; / 0 = unheld, 1 = held.
+KbDown:  .res 9 ; precomputed down-edges Prev->Held.
+
+; then $6100-7fff reserved for scratch to compile user
+; programs into. long term program storage should be in
+; source form, via forth's BLOCK mechanism (once implemented),
+; recompiled on-the-fly.
+
+.bss ; $200-7ff scratch buffers on mainboard.
+
+;Oam:   .res 256  ; sprites data, at $200 conventionally.
+VCmds: .res 256  ; encoded drawing commands queue.
+       .res 1024 ; (planned location of forth block buffer.)
+
+.zeropage ; $00-ff system state.
+
+; registers:
+;   x    param stack depth,
+;   y/a  scratch, often: y=[H], a=[L].
+
+; forth variables.
+     .res 32
 L:   .res 32 ; \ push-down, x-indexed, split parameter stack
 H:           ; / to pass data between words. depth 1: x = $ff.
 W:   .res 2  ; then six bytes of scratch, including:
-Dst: .res 2  ; \ load/store pointers for y-indexed
+Dst: .res 2  ; \ pointers for y-indexed
 Src: .res 2  ; / transfer of multiple bytes.
+; planned: Base, Here, Latest, Pending, InPtr, InEnd.
 
-.segment "CODE"
+; interrupt routine scratch space.
+V: .res 3 ; draw.
+K: .res 2 ; keyboard scanner.
+
+; global configuration:
+Custom: .res 1 ; custom handlers: $80 nmi, $40 irq
+Nmi:    .res 2 ; \ handler routine pointers. set Custom
+Irq:    .res 2 ; / to 0 first to update atomically.
+
+; video driver:
+Frames: .res 1 ; counter for synching or delaying.
+Mutex:  .res 1 ; nonzero: nmi locked, plus draw tally.
+OamPg:  .res 1 ; if sprites enabled.
+PalPg:  .res 1 ; 0 to skip, clears after upload.
+; a degenerate draw queue eventually tallies Mutex to 128+,
+; the draw interpreter abandons, nmi recovers. TODO xref
+VCtrl:  .res 1 ; \ shadow registers. sent next draw, except
+VMask:  .res 1 ; | VCtrl.7 ignored: nmi is kept enabled.
+VSclX:  .res 1 ; | careful of data races. for synchronous
+VSclY:  .res 1 ; / drawing: 0->VMask, vsync, inc Mutex.
+; $0-ff VCmds queue indices:
+VHead:   .res 1 ; 1) main appends commands here.
+VCommit: .res 1 ; 2) main moves this fwd to publish to draw.
+VTail:   .res 1 ; 3) draw interprets and moves fwd.
+; conceptually tail <= commit <= head, though since they
+; wrap in memory that won't usually be literally true.
+
+; tty driver:
+CsrCol: .res 1 ; 0-31, width of screen.
+CsrRow: .res 1 ; 0-253, except seam rows 30,31,62,63 etc
+; vaddr calc drops CsrRow.6-7, so effectively 0-29,32-61.
+; last two columns are in overscan caution zone.
+; https://www.nesdev.org/wiki/Overscan
+
+; current plans for rom space:
+;
+; $8000-bfff
+;     rom dictionary, then blocks of help text, sample code,
+;     etc. ideally extra banks, copied into $400 buffer.
+; $c000-ffff
+;     nes hardware drivers and forth kernel.
+
+.code ; FORTH -----------------------------------------------
+
+; planned: core.s stack/math/memory, ui.s interpreter/compiler.
+
 push_ya: ; push/put_ya/na/a for assembly literals.
     dex
 put_ya:
@@ -52,28 +121,21 @@ plus: ; ( n1 n0 -- n1+n0 ) addition.
     inx
     rts
 
-; KB DRIVER -------------------------------------------------
+.code ; KB DRIVER -------------------------------------------
 
 ; https://www.nesdev.org/wiki/Family_BASIC_Keyboard#Usage
 ; https://lira.kraamwinkel.be/articles/nes_keyboard
 ; not much here yet. experimenting.
 
-.segment "ZEROPAGE"
-K: .res 2 ; key scanner scratch.
-
-.segment "KBBUF"
-KbPrev: .res 9 ; \ 72 bits array of scanned keystates.
-KbHeld: .res 9 ; / 0 = unheld, 1 = held.
-KbDown: .res 9 ; precomputed down-edges Prev->Held.
-; a goal is for zeroed memory to represent lack of input.
-; costs a scanner eor but we have to waste cycles anyway.
-
-.segment "CODE" ;   per line | cumulative
+;            cycles per line | cumulative
 wait_50c: nop          ;  2c |  8c <- 6c jsr wait_50c
           jsr wait_12c ; 12c | 20c
 wait_36c: jsr wait_12c ; 12c | 32c 18c <- 6c jsr wait_36c
           jsr wait_12c ; 12c | 44c 30c
 wait_12c: rts          ;  6c | 50c 36c 12c <- 6c jsr wait_12c
+
+Joy1 = $4016
+Joy2 = $4017
 
 kb_stopscan: ; 98c: flag keys: rshift->bcc, stop->beq.
     _ lda #5, sta Joy1, jsr wait_12c ; reset to row0, burn.
@@ -112,7 +174,7 @@ kb_fullscan: ; >1200c: scan the entire keyboard.
     ; TODO scan the press events and push to a keys buffer.
     rts
 
-; VIDEO DRIVER ----------------------------------------------
+.code ; VIDEO DRIVER ----------------------------------------
 
 ; https://www.nesdev.org/wiki/PPU
 ; the picture processing unit rejects i/o while drawing the
@@ -122,39 +184,6 @@ kb_fullscan: ; >1200c: scan the entire keyboard.
 ; https://github.com/bbbradsmith/NES-ca65-example
 ; /blob/1bb961dcdf317f39460c0c28a13f33a82feb29c4/example.s#L200-L232
 ; design grown out from this, do refer to it!
-
-.segment "QUEUE"
-     .align 256 ; page-aligned so indices wrap.
-VCmds: .res 256 ; encoded drawing commands queue.
-
-; $0-3f: set PpuAddr, other opcodes far away so it's less
-; likely overflowed addresses will be misinterpreted:
-VHoriz = $a0 ; \ reset/set increment mode
-VVert =  $a1 ; / bit PpuCtrl.1 (+1/32)
-VSend =  $a2 ; args: len val1 val2 val3 ...
-VFill =  $a3 ; args: len val
-VMove =  $a4 ; args: len addrh addrl
-VPace =  $a5 ; stop drawing until next frame
-
-.segment "ZEROPAGE" ; $0-ff indices into the queue:
-VHead:   .res 1 ; 1) main appends commands here.
-VCommit: .res 1 ; 2) main moves this fwd to publish to draw.
-VTail:   .res 1 ; 3) draw interprets and moves fwd.
-; conceptually tail <= commit <= head, though since they
-; wrap in memory that won't usually be literally true.
-
-.segment "ZEROPAGE" ; draw/main communication:
-VCtrl:  .res 1 ; \ shadow registers. sent next draw, except
-VMask:  .res 1 ; | VCtrl.7 ignored: nmi is kept enabled.
-VSclX:  .res 1 ; | careful of data races. for synchronous
-VSclY:  .res 1 ; / drawing: 0->VMask, vsync, inc Mutex.
-V:      .res 3 ; draw scratch, can't touch W in nmi.
-OamPg:  .res 1 ; if sprites enabled.
-PalPg:  .res 1 ; 0 to skip, clears after upload.
-Frames: .res 1 ; counter for synching or delaying.
-Mutex:  .res 1 ; nonzero: nmi locked, plus draw tally.
-; a degenerate draw queue eventually tallies to 128+,
-; the draw interpreter abandons, nmi recovers. TODO xref
 
 ; https://www.nesdev.org/wiki/PPU_registers
 PpuCtrl =   $2000 ; %n.tbsvyx nmi tall bgpat sprpat vert yxtbl
@@ -166,7 +195,16 @@ PpuAddr =   $2006 ; addrh, addrl  / to reset order latch
 PpuData =   $2007 ; increments by 1 or 32 (PpuCtrl vert)
 OamDma =    $4014 ; (cpu) page to transfer to ppu
 
-.segment "CODE"
+; VCmds encodings:
+; $0-3f: set PpuAddr, other opcodes far away so it's less
+; likely overflowed addresses will be misinterpreted:
+VHoriz = $a0 ; \ reset/set increment mode
+VVert =  $a1 ; / bit PpuCtrl.1 (+1/32)
+VSend =  $a2 ; args: len val1 val2 val3 ...
+VFill =  $a3 ; args: len val
+VMove =  $a4 ; args: len addrh addrl
+VPace =  $a5 ; stop drawing until next frame
+
 draw: ; ~2240c left after nmi prologue.
     _ lda #1, sta Mutex ; lock nmi for synch'd draw in main.
     bit PpuStatus ; reset PpuAddr/PpuScroll write latch.
@@ -285,21 +323,15 @@ vsync: ; ( -- ) wait for next vblank.
 :   _ cmp Frames, beq :-
     rts
 
-; TTY DRIVER ------------------------------------------------
+.rodata ; TTY DRIVER ----------------------------------------
 
-.segment "RODATA"
 RomPalette:
     .align 256
     .repeat 8
         .byte $0F, $29, $17, $20
     .endrepeat
 
-.segment "ZEROPAGE" ; tty cursor:
-CsrCol: .res 1 ; 0-31, width of screen.
-CsrRow: .res 1 ; 0-253, except seam rows 30,31,62,63 etc
-; vaddr calc drops CsrRow.6-7, so effectively 0-29,32-61.
-; last two columns are in overscan caution zone.
-; https://www.nesdev.org/wiki/Overscan
+.code
 
 ; nw ntb0 -> [ $2000-23ff ][ $2400-27ff ] <- ne ntb1  \ 1k
 ; sw ntb2 -> [ $2800-2bff ][ $2c00-2fff ] <- se ntb3  / each
@@ -308,7 +340,6 @@ CsrRow: .res 1 ; 0-253, except seam rows 30,31,62,63 etc
 ; mirroring either horizontally or vertically. ntb1 and 2 are
 ; contiguous in memory and pair with both configurations.
 
-.segment "CODE"
 page: ; ( -- ) init and clear the screen.
     ; called on reset, must enable nmi directly! but *also*
     ; must be callable during normal interpreter use. ~0.6f.
@@ -366,9 +397,8 @@ cr: ; ( -- ) move the cursor to the start of next line.
     _ lda #32, jsr a_to_v    ; an entire row
     _ lda #' ', jmp a_to_v   ; with spaces
 
-; MAIN ------------------------------------------------------
+.code ; MAIN ------------------------------------------------
 
-.segment "CODE"
 main:
     _ lda #1, jsr add_y, jsr vsync, jmp main
 
@@ -386,7 +416,7 @@ add_y: ; scly += a, [-16..16] for correct seam jump.
 :   sty VSclY ;      / race 3c
     rts
 
-_ DmcFreq = $4010, Joy1 = $4016, Joy2 = $4017
+DmcFreq = $4010
 
 reset: ; just powered on, turn off all the things:
     _ sei, cld ; irq, decimal mode
@@ -431,12 +461,9 @@ irq:
     jmp (Irq)
 :   rti
 
-.segment "RAMVEC" ; overrides:
-Custom: .res 1 ; custom handlers: $80 nmi, $40 irq
-Nmi:    .res 2 ; \ handler routine pointers. set Custom
-Irq:    .res 2 ; / to 0 first to update atomically.
+; nes hardware and romfile boilerplate:
 
-.segment "ROMVEC" ; in rom, required by the cpu:
+.segment "VECTORS"
     .addr nmi   ; at vblank
     .addr reset ; at power on and reset
     .addr irq   ; unused by default
