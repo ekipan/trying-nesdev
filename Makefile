@@ -98,6 +98,7 @@ PERIPH = 0x23# $0-4f: 0 none, 1 joypad, $23 basic keyboard
 #     PSTACK:   type = zp,  load = P0, start = 0; # for aesthetics
 #     ZEROPAGE: type = zp,  load = P0;
 #     QUEUE:    type = bss, load = P2, start = $200; # 256b
+#     KBBUF:    type = bss, load = P2;
 #     BSS:      type = bss, load = P2;
 #     RAMVEC:   type = bss, load = P2, start = $3FB; # 5b
 #    #BLOCK:    type = bss, load = P2, start = $400; # 1k

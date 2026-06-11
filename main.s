@@ -62,29 +62,42 @@ DEF plus, "+" ; ( n1 n0 -- n1+n0 ) addition.
 ; https://lira.kraamwinkel.be/articles/nes_keyboard
 ; not much here yet. experimenting.
 
-.segment "ZEROPAGE" ; TODO move scanbufs out of zeropage
-KbScan:  .res 9 ; 0 = unheld, 1 = held
-KbPress: .res 9 ; 0 = no change, 1 = went down
-K:       .res 2 ; scratch
-; a goal is for newly zeroed memory to represent lack of
-; input. it adds a couple more eor's into the scanner but
-; that's fine: we have to waste cycles anyway.
+.segment "ZEROPAGE"
+K: .res 2 ; key scanner scratch.
 
-.segment "CODE"
-kb_scan:
+.segment "KBBUF"
+KbPrev: .res 9 ; \ 72 bits array of scanned keystates.
+KbHeld: .res 9 ; / 0 = unheld, 1 = held.
+KbDown: .res 9 ; precomputed down-edges Prev->Held.
+; a goal is for zeroed memory to represent lack of input.
+; costs a scanner eor but we have to waste cycles anyway.
+
+.segment "CODE" ;   per line | cumulative
+wait_50c: nop          ;  2c |  8c <- 6c jsr wait_50c
+          jsr wait_12c ; 12c | 20c
+wait_36c: jsr wait_12c ; 12c | 32c 18c <- 6c jsr wait_36c
+          jsr wait_12c ; 12c | 44c 30c
+wait_12c: rts          ;  6c | 50c 36c 12c <- 6c jsr wait_12c
+
+kb_stopscan: ; 98c: flag keys: rshift->bcc, stop->beq.
+    _ lda #5, sta Joy1, jsr wait_12c ; reset to row0, burn.
+    _ lda #6, sta Joy1, jsr wait_50c ; strobe col1, burn.
+    _ lda Joy2, lsr, lsr, lsr, and #2, rts ; nc=shift, z=stop.
+
+kb_fullscan: ; >1200c: scan the entire keyboard.
     ; 9 rows * 2 cols * 4 bits = 72 keys.
     _ lda #5, sta Joy1 ; reset keyboard to row 0, col 0.
-    jsr @wait_12c
+    jsr wait_12c
     _ lda #4, sta Joy1 ; strobe column 0. wait 50c:
     ; interleave work while waiting for the matrix to settle:
     ; cycle counts:     line accum
-    jsr @wait_36c      ; 36c 36c
+    jsr wait_36c       ; 36c 36c
     _ bit 0, ldy #8    ;  5c 41c  scan 9 rows: 8-0.
-:   lda KbScan,y       ;  4c 45c  \ temporarily save previous
-    sta KbPress,y      ;  5c 50c  / scan to detect keypresses.
+:   lda KbHeld,y       ;  4c 45c  \ save previous scan
+    sta KbPrev,y       ;  5c 50c  / while we're here.
     _ lda Joy2, sta K  ; read column 0: %...kkkk. 0 = held
     _ lda #6, sta Joy1 ; strobe column 1. wait 50c:
-    jsr @wait_36c      ; 36c 36c
+    jsr wait_36c       ; 36c 36c
     _ lda K, asl, asl  ;  7c 43c  %.kkkk.00 <- column 0
     _ asl, and #$f0    ;  4c 47c  %kkkk0000
     sta K              ;  3c 50c
@@ -93,20 +106,15 @@ kb_scan:
     _ lda K+1, lsr     ;  5c  5c  %0...kkkk <- column 1
     _ and #$0f, ora K  ;  5c 10c  %kkkkkkkk
     eor #$ff           ;  2c 12c  1 = curr held
-    sta KbScan,y       ;  5c 17c
-    lda KbPress,y      ;  4c 21c  1 = prev held
+    sta KbHeld,y       ;  5c 17c
+    lda KbPrev,y       ;  4c 21c  1 = prev held
     eor #$ff           ;  2c 23c  1 = prev unheld
-    and KbScan,y       ;  4c 27c  1 = prev unheld & curr held
-    sta KbPress,y      ;  5c 32c  i.e. pressed
+    and KbHeld,y       ;  4c 27c  1 = prev unheld & curr held
+    sta KbDown,y       ;  5c 32c  i.e. pressed
     _ nop, nop         ;  4c 36c
     _ dey, bpl :-      ;  5c 41c -> : 4c+5c 50c  more rows?
     ; TODO scan the press events and push to a keys buffer.
     rts
-@wait_36c:        ; (6c jsr to get here)
-    jsr @wait_12c ; 12c
-    jsr @wait_12c ; 12c
-@wait_12c:        ; (6c jsr)
-    rts           ;  6c
 
 ; VIDEO DRIVER ----------------------------------------------
 
@@ -415,7 +423,9 @@ nmi: ; 2270c deadline to finish drawing
     inc Frames ; notify main a vblank happened.
     jsr draw   ; store 1 in Mutex and process queue.
     ; TODO poll Joy1? sound?
-    jsr kb_scan ; >1200c, 10.6 scanlines
+    ; jsr kb_fullscan ; >1200c, 10.6 scanlines
+    _ jsr kb_stopscan, beq reset ; pressed stop?
+    ; TODO branch to interpreter recovery instead.
     _ lda #0, sta Mutex ; unlock next frame
 :   _ pla, tay, pla, rti
 
