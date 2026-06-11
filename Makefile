@@ -1,9 +1,8 @@
 
 # Forever TODO: sync this and README with the actual status.
 
-## Just a noninteractive scrolling demo right now, plus
-## *lots* of untested code that is proving fun to write.
-## Hoping to be: a fast, fun NES Forth akin to durexForth.
+## A noninteractive demo and in-progress kb/tty drivers so
+## far. Hopes: a fast, fun NES Forth akin to durexForth.
 #:
 ## You'll need this software:
 CA65 ?= ca65 ## 6502 assembler, in the cc65 suite.
