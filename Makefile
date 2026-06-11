@@ -90,26 +90,25 @@ PERIPH = 0x23# $0-4f: 0 none, 1 joypad, $23 basic keyboard
 # MEMORY {
 #     HDR: file = %O, start = 0, size = $10, type = ro, fill = yes;
 # # cpu ram
-#     P0:  file = "", start = $0000, size = $0100, type = rw;
-#     P2:  file = "", start = $0200, size = $0600, type = rw;
-#     P60: file = "", start = $6000, size = $2000, type = rw;
+#     C00: file = "", start = $0000, size = $0100, type = rw;
+#     C02: file = "", start = $0200, size = $0600, type = rw;
+#     C60: file = "", start = $6000, size = $0100, type = rw;
 # # cpu rom
-#     PG0: file = %O, start = $8000, size = $4000, type = ro, fill = yes;
-#     PGK: file = %O, start = $C000, size = $4000, type = ro, fill = yes;
+#     C80: file = %O, start = $8000, size = $4000, type = ro, fill = yes;
+#     CC0: file = %O, start = $C000, size = $4000, type = ro, fill = yes;
 # # ppu
-#     CH0: file = %O, start = $0000, size = $2000, type = ro, fill = yes, fillval = $AA;
+#     P00: file = %O, start = $0000, size = $2000, type = ro, fill = yes, fillval = $AA;
 # }
 # SEGMENTS {
 #     INES:     type = ro, load = HDR; # metadata
 # # cpu ram:
-#     ZEROPAGE: type = zp,  load = P0;
-#     BSS:      type = bss, load = P2;
-#     DATA:     type = bss, load = P60;
+#     ZEROPAGE: type = zp,  load = C00;
+#     BSS:      type = bss, load = C02;
+#     DATA:     type = bss, load = C60;
 # # cpu rom:
-#    #DICT:     type = ro, load = PG0, start = $8000;
-#     CODE:     type = ro, load = PGK;
-#     RODATA:   type = ro, load = PGK, align = $100;
-#     VECTORS:  type = ro, load = PGK, start = $FFFA;
+#     CODE:     type = ro, load = CC0;
+#     RODATA:   type = ro, load = CC0;
+#     VECTORS:  type = ro, load = CC0, start = $FFFA;
 # # ppu:
-#     FONT:     type = ro, load = CH0;
+#     FONT:     type = ro, load = P00;
 # }
