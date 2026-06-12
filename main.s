@@ -54,11 +54,10 @@ V: .res 3 ; draw.
 K: .res 2 ; keyboard scanner.
 
 ; global configuration:
-Config: .res 1 ; %in?????p  custom irq/nmi, upload palettes.
-; after palette upload, draw resets Config.0.
+Config: .res 1 ; %in?????? custom irq/nmi.
 Nmi:    .res 2 ; \ handler routine pointers. set Config
 Irq:    .res 2 ; / to 0 first to update atomically.
-Frames: .res 1 ; counter for synching or delaying.
+Frames: .res 1 ; nmi count, for synching or delaying.
 Mutex:  .res 1 ; nonzero: nmi locked, plus draw tally.
 ; a degenerate draw queue eventually tallies Mutex to 128+,
 ; the draw interpreter abandons, nmi recovers. TODO xref
@@ -103,7 +102,6 @@ VCmds: .res 256  ; encoded drawing commands queue.
 
 .data ; $6000-60ff scratch buffers on cart.
 
-Palette: .res 32 ; to upload to ppu.
 KbPrev:  .res 9 ; \ 72 bits array of scanned keystates.
 KbHeld:  .res 9 ; / 0 = unheld, 1 = held.
 KbDown:  .res 9 ; precomputed down-edges Prev->Held.
@@ -205,13 +203,6 @@ draw: ; ~2240c left after nmi prologue.
     _ and #$10, beq :+ ; sprites disabled? -> skip dma
     _ lda #$00, sta OamAddr ; \ costs
     _ lda #>Oam, sta OamDma ; / 521c
-:   ; load palette:
-    _ lda Config, lsr, bcc :++ ; no palette change?
-    _ lda #$3f, ldy #0, sta PpuAddr, sty PpuAddr ; $3f00-3f1f
-    _ sty PpuCtrl, dec Config ; horiz mode, clear flag, upload:
-:   lda Palette,y ; \ txfer   4c \ 15c * 32 = 480c
-    sta PpuData   ; / byte    4c | TODO unroll?
-    _ iny, cpy #$20, bne :- ; 7c / +138 bytes -160 cycles
 :   ; save pstack, interpret draw commands, advance tail:
     _ txa, pha, ldx VTail, jsr @horiz, stx VTail, pla, tax
     ; vblank is possibly blown. construct queues carefully!
@@ -359,16 +350,20 @@ cr: ; ( -- ) move the cursor to the start of next line.
     _ lda #32, jsr a_to_v    ; an entire row
     _ lda #' ', jmp a_to_v   ; with spaces
 
+palette_move:
+    _ lda #$3f, jsr a_to_v, lda #0, jsr a_to_v ; to $3f00-1f
+    _ lda #VMove, jsr a_to_v, lda #32, jmp a_to_v ; send 32b
+
 page: ; ( -- ) init and clear the screen.
     ; called on reset, must enable nmi directly! but *also*
     ; must be callable during normal interpreter use. ~0.6f.
-    _ ldy #32, lda #1, sta Mutex, sta Config ; upload palette:
-:   lda RomPalette,y ; copy initial palette
-    sta Palette,y    ; to ram buffer.
-    _ dey, bpl :-
-    _ lda #0, sta VMask, sta CsrRow, sta CsrCol, sta VSclY
-    _ lda #$f8, sta VSclX ; inside overscan, TODO compute y.
-    _ lda VCommit, sta VTail, sta VHead ; delete the queue.
+    _ lda #1, sta Mutex ; lock nmi if it's running.
+    _ lda #0, sta Config, sta VMask, sta CsrRow, sta CsrCol
+    _ sta VCommit, sta VTail, sta VHead ; delete the queue
+    _ jsr palette_move ; and set the default palette:
+    _ lda #>RomPalette, jsr a_to_v
+    _ lda #<RomPalette, jsr a_to_v, jsr vcommit
+    _ lda #$f8, sta VSclX, sta VSclY ; inside overscan, TODO y.
     _ lda #$80, sta VCtrl, sta PpuCtrl ; enable nmi.
     jsr vsync ; also frees the Mutex.
     ; clear nametables 1 and 2, see illustration below:
