@@ -54,7 +54,7 @@ V: .res 3 ; draw.
 K: .res 2 ; keyboard scanner.
 
 ; global configuration:
-Config: .res 1 ; %inxxxxxp  custom irq/nmi, upload palettes.
+Config: .res 1 ; %in?????p  custom irq/nmi, upload palettes.
 ; after palette upload, draw resets Config.0.
 Nmi:    .res 2 ; \ handler routine pointers. set Config
 Irq:    .res 2 ; / to 0 first to update atomically.
@@ -141,7 +141,7 @@ Joy2 = $4017
 kb_stopscan: ; 98c: flag keys: rshift->bcc, stop->beq.
     _ lda #5, sta Joy1, jsr wait_12c ; reset to row 0.
     _ lda #6, sta Joy1, jsr wait_50c, lda Joy2 ; read col 1.
-kb_flags: ; %xxxsxrxx <- stop and rshift keys.
+kb_flags: ; %???sxrx? <- stop and rshift keys 0 = held.
     _ lsr, lsr, lsr, and #2, rts ; nc=rshift, z=stop.
 
 kb_fullscan: ; >1200c: scan the entire keyboard.
@@ -155,15 +155,15 @@ kb_fullscan: ; >1200c: scan the entire keyboard.
     _ bit 0, ldy #8    ;  5c 41c  scan 9 rows: 8-0.
 :   lda KbHeld,y       ;  4c 45c  \ save previous scan
     sta KbPrev,y       ;  5c 50c  / while we're here.
-    _ lda Joy2, sta K  ; read column 0: %...kkkk. 0 = held
+    _ lda Joy2, sta K  ; read column 0: %???kkkk? 0 = held
     _ lda #6, sta Joy1 ; strobe column 1. wait 50c:
     jsr wait_36c       ; 36c 36c
-    _ lda K, asl, asl  ;  7c 43c  %.kkkk.00 <- column 0
+    _ lda K, asl, asl  ;  7c 43c  %?kkkk?00 <- column 0
     _ asl, and #$f0    ;  4c 47c  %kkkk0000
     sta K              ;  3c 50c
-    _ lda Joy2, sta K+1 ; read column 1: %...kkkk. 0 = held
+    _ lda Joy2, sta K+1 ; read column 1: %???kkkk? 0 = held
     _ lda #4, sta Joy1 ; strobe next row column 0, wait 50c:
-    _ lda K+1, lsr     ;  5c  5c  %0...kkkk <- column 1
+    _ lda K+1, lsr     ;  5c  5c  %0???kkkk <- column 1
     _ and #$0f, ora K  ;  5c 10c  %kkkkkkkk
     eor #$ff           ;  2c 12c  1 = curr held
     sta KbHeld,y       ;  5c 17c
@@ -188,9 +188,9 @@ kb_fullscan: ; >1200c: scan the entire keyboard.
 ; design grown out from this, do refer to it!
 
 ; https://www.nesdev.org/wiki/PPU_registers
-PpuCtrl =   $2000 ; %n.tbsvyx nmi tall bgpat sprpat vert yxtbl
+PpuCtrl =   $2000 ; %n?tbsvyx nmi tall bgpat sprpat vert yxtbl
 PpuMask =   $2001 ; %rgbsbllg dimrgb spr bg leftcol greysc
-PpuStatus = $2002 ; %vzo..... vblank zerohit overflow
+PpuStatus = $2002 ; %vzo????? vblank zerohit overflow
 OamAddr =   $2003 ; ppu write offset, nonzero corrupts oam!
 PpuScroll = $2005 ; send x then y \ touch PpuStatus
 PpuAddr =   $2006 ; addrh, addrl  / to reset order latch
@@ -327,7 +327,7 @@ csr_vaddr: ; put cursor vaddr onto draw queue.
     _ ldy CsrRow, lda CsrCol
 ya_vaddr:
     sta W+1 ; compute: $2400 + ((y & 63) << 5 | a)
-    _ lda #$00, sta W           ; W %00000000  y %xxrrrrrr
+    _ lda #$00, sta W           ; W %00000000  y %??rrrrrr
     _ tya, asl, asl, asl, rol W ; W %0000000r  a %rrrrr000
     _ asl, rol W, asl, rol W    ; W %00000rrr  a %rrr00000
     _ ldy W, ora W+1, jsr push_ya ; ( offset )
