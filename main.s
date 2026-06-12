@@ -6,6 +6,18 @@
 ; to jump around, grep for:
 ; /code_label:/ /DataLabel:/ /ConstantLabel =/
 
+.segment "VECTORS" ; https://www.nesdev.org/wiki/CPU_memory_map
+.addr nmi, reset, irq ; look for "vectors" on that page.
+
+.segment "INES" ; https://www.nesdev.org/wiki/NES_2.0
+.byte "NES", $1a, PROM&255, CROM&255 ; 0-5
+.byte ((MAPPER&$f)<<4) | ((PSRAM+CSRAM>0)<<1) | MIRROR ; 6
+.byte ((MAPPER>>4)&$f) | 8 ; 7: hw nes, binfmt nes2.0
+.byte (MAPPER>>8), ((PROM>>4)&$f0)|(CROM>>8)&$f ; 8-9
+.byte (PSRAM<<4)|PWRAM, (CSRAM<<4)|CWRAM ; 10-11
+.byte 0, 0, 0, PERIPH ; 12-15
+; see Makefile for cart config defines.
+
 ; I HATE SCROLLING ------------------------------------------
 
 ; time for a bad first impression! check this out:
@@ -43,22 +55,6 @@
 ; more macros planned: dict assembly, maybe some overlapping
 ; instruction shenanigans if I'm feeling cute. it's good
 ; enough for super mario bros after all!
-
-.segment "INES" ; see Makefile for cart config defines:
-
-; https://www.nesdev.org/wiki/NES_2.0
-.byte "NES", $1a, PROM&255, CROM&255 ; 0-5
-.byte ((MAPPER&$f)<<4) | ((PSRAM+CSRAM>0)<<1) | MIRROR ; 6
-.byte ((MAPPER>>4)&$f) | 8 ; 7: hw nes, binfmt nes2.0
-.byte (MAPPER>>8), ((PROM>>4)&$f0)|(CROM>>8)&$f ; 8-9
-.byte (PSRAM<<4)|PWRAM, (CSRAM<<4)|CWRAM ; 10-11
-.byte 0, 0, 0, PERIPH ; 12-15
-
-.segment "VECTORS" ; nes hardware boilerplate:
-
-.addr nmi   ; at vblank.
-.addr reset ; at power-on.
-.addr irq   ; unused by default.
 
 ; MEMORY MAP ------------------------------------------------
 
@@ -366,8 +362,7 @@ rawemit: ; ( c -- ) display a character.
     _ lda CsrCol, cmp #32, bcc :+ ; still on screen?
     jsr cr ; no: go to next line
 :   _ lda #VSend, jsr vbyte, lda #1, jsr vbyte ; send one
-    lda L,x                       ; stack-taken
-    _ inx, jsr vbyte, jmp vcommit ; character
+    _ lda L x, inx, jsr vbyte, jmp vcommit     ; character
 
 cr: ; ( -- ) move the cursor to the start of next line.
     _ lda #VPace, jsr vbyte ; 64b is risky, pace before/after.
@@ -436,15 +431,9 @@ reset: ; just powered on, turn off all the things:
     bit PpuStatus
 :   _ bit PpuStatus, bpl :- ; first frame
     lda #0
-:   sta $000,x
-    sta $100,x
-    sta $200,x ; TODO offscreen $ff
-    sta $300,x
-    sta $400,x
-    sta $500,x
-    sta $600,x
-    sta $700,x
-    sta $6000,x
+:   _ sta $0000 x, sta $0100 x, sta $0200 x
+    _ sta $0300 x, sta $0400 x, sta $0500 x
+    _ sta $0600 x, sta $0700 x, sta $6000 x
     _ inx, bne :-
 :   _ bit PpuStatus, bpl :- ; second frame
     _ jsr page, jmp main ; clear bg, start nmi, start main
