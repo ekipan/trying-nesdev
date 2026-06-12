@@ -283,7 +283,7 @@ draw: ; ~2240c left after nmi prologue.
 
 ; sending, synching:
 
-a_to_v: ; append a byte to queue.
+vbyte: ; append a byte to queue.
     ldy VHead
     sta VCmds,y
     _ inc VHead, rts
@@ -314,37 +314,37 @@ ya_vaddr:
     _ tya, asl, asl, asl, rol W ; W %0000000r  a %rrrrr000
     _ asl, rol W, asl, rol W    ; W %00000rrr  a %rrr00000
     _ ora W+1, sta W+1
-    _ lda W, clc, adc #$24, jsr a_to_v ; vaddrh
-    _ lda W+1, jmp a_to_v ; vaddrl
+    _ lda W, clc, adc #$24, jsr vbyte ; vaddrh
+    _ lda W+1, jmp vbyte ; vaddrl
 
 rawemit: ; ( c -- ) display a character.
     _ jsr csr_vaddr, inc CsrCol
     _ lda CsrCol, cmp #32, bcc :+ ; still on screen?
     jsr cr ; no: go to next line
-:   _ lda #VSend, jsr a_to_v, lda #1, jsr a_to_v ; send one
-    lda L,x                        ; stack-taken
-    _ inx, jsr a_to_v, jmp vcommit ; character
+:   _ lda #VSend, jsr vbyte, lda #1, jsr vbyte ; send one
+    lda L,x                       ; stack-taken
+    _ inx, jsr vbyte, jmp vcommit ; character
 
 cr: ; ( -- ) move the cursor to the start of next line.
-    _ lda #VPace, jsr a_to_v ; 64b is risky, pace before/after.
-    _ lda #$00, sta CsrCol   ; col = 0, increment row:
+    _ lda #VPace, jsr vbyte ; 64b is risky, pace before/after.
+    _ lda #$00, sta CsrCol  ; col = 0, increment row:
     _ ldy CsrRow, jsr @iny, sty CsrRow, jsr @clear ; and clear.
     _ ldy CsrRow, jsr @iny, jsr @clear ; and below screen.
     ; TODO scroll.
-    _ lda #VPace, jsr a_to_v, jmp vcommit
+    _ lda #VPace, jsr vbyte, jmp vcommit
 @iny:
     _ iny, tya, and #31, cmp #30, bcc :+ ; still in-screen?
     _ iny, iny ; pass over attrtable seam.
 :   rts
 @clear:
-    _ lda #0, jsr ya_vaddr   ; at row address:
-    _ lda #VFill, jsr a_to_v ; fill
-    _ lda #32, jsr a_to_v    ; an entire row
-    _ lda #' ', jmp a_to_v   ; with spaces
+    _ lda #0, jsr ya_vaddr  ; at row address:
+    _ lda #VFill, jsr vbyte ; fill
+    _ lda #32, jsr vbyte    ; an entire row
+    _ lda #' ', jmp vbyte   ; with spaces
 
 palette_move:
-    _ lda #$3f, jsr a_to_v, lda #0, jsr a_to_v ; to $3f00-1f
-    _ lda #VMove, jsr a_to_v, lda #32, jmp a_to_v ; send 32b
+    _ lda #$3f, jsr vbyte, lda #0, jsr vbyte ; to $3f00-1f
+    _ lda #VMove, jsr vbyte, lda #32, jmp vbyte ; send 32b
 
 page: ; ( -- ) init and clear the screen.
     ; called on reset, must enable nmi directly! but *also*
@@ -353,8 +353,8 @@ page: ; ( -- ) init and clear the screen.
     _ lda #0, sta Config, sta VMask, sta CsrRow, sta CsrCol
     _ sta VCommit, sta VTail, sta VHead ; delete the queue
     _ jsr palette_move ; and set the default palette:
-    _ lda #>RomPalette, jsr a_to_v
-    _ lda #<RomPalette, jsr a_to_v, jsr vcommit
+    _ lda #>RomPalette, jsr vbyte
+    _ lda #<RomPalette, jsr vbyte, jsr vcommit
     _ lda #$f8, sta VSclX, sta VSclY ; inside overscan, TODO y.
     _ lda #$80, sta VCtrl, sta PpuCtrl ; enable nmi.
     jsr vsync ; also frees the Mutex.
