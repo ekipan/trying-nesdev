@@ -103,7 +103,7 @@ PERIPH = 0x23# $0-4f: 0 none, 1 joypad, $23 basic keyboard
 #     INES:     type = ro, load = HDR; # metadata
 # # cpu ram:
 #     ZEROPAGE: type = zp,  load = C00;
-#     BSS:      type = bss, load = C02;
+#     BSS:      type = bss, load = C02, align = $100;
 #     DATA:     type = bss, load = C60;
 # # cpu rom:
 #     CODE:     type = ro, load = CC0;

@@ -96,6 +96,7 @@ CsrRow: .res 1 ; 0-253, except seam rows 30,31,62,63 etc
 
 .bss ; $200-7ff scratch buffers on mainboard.
 
+     .align 256
 Oam:   .res 256  ; sprites data, at $200 conventionally.
 VCmds: .res 256  ; encoded drawing commands queue.
        .res 1024 ; (planned location of forth block buffer.)
@@ -203,7 +204,7 @@ draw: ; ~2240c left after nmi prologue.
     _ lda VMask, sta PpuMask ; bg/sprites on/off
     _ and #$10, beq :+ ; sprites disabled? -> skip dma
     _ lda #$00, sta OamAddr ; \ costs
-    _ lda Oam, sta OamDma   ; / 521c
+    _ lda #>Oam, sta OamDma ; / 521c
 :   ; load palette:
     _ lda #1, and Config, beq :++ ; upload palette?
     _ lda #$3f, ldy #0, sta PpuAddr, sty PpuAddr ; $3f00-3f1f
