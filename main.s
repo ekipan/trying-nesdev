@@ -6,20 +6,36 @@
 ; to jump around, grep for:
 ; /code_label:/ /DataLabel:/ /ConstantLabel =/
 
-; time for a bad first impression! code *should* be dense:
+; time for a bad first impression! check this out:
+
+.macro COMMA IXN ; insert a comma before final x or y.
+    .local R
+    .define R .right(1, {IXN}) ; rightmost token
+    .if .xmatch({R}, x) .or .xmatch({R}, y)
+        .left(.tcount({IXN}) - 1, {IXN}), R
+    .else
+        IXN
+    .endif ; eg: COMMA lda $20 x   ; lda $20,x
+.endmacro  ; eg: COMMA sta ($40) y ; sta ($40),y
+
+; a bizarre looking macro. why on earth would you want this?
+; well, I'm of the opinion that code *should* be dense:
+
 .macro _ I,J,K,L,M,N,O,P ; list of instructions.
     .if .not .blank({I}) ; up to 8:
-        I
+        COMMA I
         _ J,K,L,M,N,O,P
     .endif ; eg: _ pha, txa, pha, tya, pha
-.endmacro  ; eg: _ jsr foo, jsr bar, jmp qux
+.endmacro  ; eg: _ lda $20 x, sta ($40) y, jmp foo
 ; rule: loads at start, 0/1 branches at end.
 
 ; it does break the debugger's source view but I've found
-; Mesen's disassembly view to be sufficient for my needs.
+; mesen's disassembly view to be sufficient for my needs.
 ; might reconsider if it becomes a problem. dense code ahead.
 
-; more macros planned: dict assembly, more shenanigans.
+; more macros planned: dict assembly, maybe some overlapping
+; instruction shenanigans if I'm feeling cute. it's good
+; enough for super mario bros after all!
 
 .segment "INES" ; see Makefile for cart config defines:
 
