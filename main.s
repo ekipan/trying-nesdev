@@ -6,17 +6,19 @@
 ; to jump around, grep for:
 ; /code_label:/ /DataLabel:/ /ConstantLabel =/
 
+; I HATE BOILERPLATE ----------------------------------------
+
 ; time for a bad first impression! check this out:
 
 .macro COMMA IXN ; insert a comma before final x or y.
-    .local R
-    .define R .right(1, {IXN}) ; rightmost token
+    .local R ; rightmost token
+    .define R .right(1, {IXN})
     .if .xmatch({R}, x) .or .xmatch({R}, y)
         .left(.tcount({IXN}) - 1, {IXN}), R
-    .else
+    .else ; otherwise just a plain instruction:
         IXN
-    .endif ; eg: COMMA lda $20 x   ; lda $20,x
-.endmacro  ; eg: COMMA sta ($40) y ; sta ($40),y
+    .endif ; eg: COMMA lda $20 x   ; -> lda $20,x
+.endmacro  ; eg: COMMA sta ($40) y ; -> sta ($40),y
 
 ; a bizarre looking macro. why on earth would you want this?
 ; well, I'm of the opinion that code *should* be dense:
@@ -47,27 +49,37 @@
 .byte (PSRAM<<4)|PWRAM, (CSRAM<<4)|CWRAM ; 10-11
 .byte 0, 0, 0, PERIPH ; 12-15
 
+.segment "VECTORS" ; nes hardware boilerplate:
+
+.addr nmi   ; at vblank.
+.addr reset ; at power-on.
+.addr irq   ; unused by default.
+
 ; MEMORY MAP ------------------------------------------------
 
 .zeropage ; $00-ff system state.
 
 ; registers:
+;   pc   subroutine-threaded, so forth's ip too.
+;   sp   return stack offset in page 1.
 ;   x    parameter stack offset: $e0-ff or 0 (empty).
 ;   y/a  scratch, often: y=[H], a=[L].
 
-; forth variables:
+; the parameter stack:
      .res 32
 L:   .res 32 ; \ push-down, x-indexed, split parameter stack
 H:           ; / to pass data between words. depth 1: x = $ff.
-; overflow wraps to top of zeropage, underflow corrupts W:
-W:   .res 2  ; six bytes of scratch, including:
-Dst: .res 2  ; \ pointers for y-indexed
-Src: .res 2  ; / transfer of multiple bytes.
-; planned: Base, Here, Latest, Pending, InPtr, InEnd.
+; splitting prevents x-misalignment and reduces
+; push/drop to a single dex/inx instruction.
 
-; interrupt routine scratch space:
-V: .res 3 ; draw.
-K: .res 2 ; keyboard scanner.
+; scratch space:
+V:   .res 3 ; draw scratch.       \ interrupt
+K:   .res 2 ; kb scanner scratch. / routines.
+W:   .res 2 ; general forth scratch.
+Src: .res 2 ; \ pointers for y-indexed
+Dst: .res 2 ; / transfer of multiple bytes.
+; an underflowed pstack only corrupts scratch first, hopefully
+; mitigating damage. overflow wraps to the end of zeropage.
 
 ; global configuration:
 Config: .res 1 ; %in?????? custom irq/nmi.
@@ -109,31 +121,32 @@ CsrRow: .res 1 ; 0-253, except seam rows 30,31,62,63 etc
 ; https://www.nesdev.org/wiki/Overscan
 ; TODO reconsider design, might fix CsrRow in 0-59 instead.
 
-.bss ; $200-7ff scratch buffers on mainboard.
+; forth interpreter:
+; planned: Base, Here, Latest, Pending, InPtr, InEnd.
+
+.bss ; $200-7ff buffers on mainboard.
 
      .align 256
 Oam:   .res 256  ; sprites data, at $200 conventionally.
 VCmds: .res 256  ; encoded drawing commands queue.
        .res 1024 ; (planned location of forth block buffer.)
 
-.data ; $6000-60ff scratch buffers on cart.
+.data ; $6000-60ff buffers on cart.
 
 KbPrev:  .res 9 ; \ 72 bits array of scanned keystates.
 KbHeld:  .res 9 ; / 0 = unheld, 1 = held.
 KbDown:  .res 9 ; precomputed down-edges Prev->Held.
 
-; then $6100-7fff reserved for scratch to compile user
-; programs into. long term program storage should be in
-; source form, via forth's BLOCK mechanism (once implemented),
-; recompiled on-the-fly.
-
-; current plans for rom space:
-
-; $8000-bfff
+; $6100-7fff - ram
+;   reserved for scratch to compile user programs into. long
+;   term program storage should be in source form, via forth's
+;   BLOCK mechanism (once implemented), recompiled on-the-fly.
+;
+; $8000-bfff - rom (plans TODO)
 ;   rom dictionary, then blocks of help text, sample code,
 ;   etc. ideally extra banks, copied into $400 buffer.
-
-; $c000-ffff
+;
+; $c000-ffff - rom
 ;   nes hardware drivers and forth kernel.
 
 .code ; KB DRIVER -------------------------------------------
@@ -142,14 +155,14 @@ KbDown:  .res 9 ; precomputed down-edges Prev->Held.
 ; https://lira.kraamwinkel.be/articles/nes_keyboard
 ; not much here yet. experimenting.
 
-;            cycles per line | cumulative
-wait_50c: nop          ;  2c |  8c <- 6c jsr wait_50c
+wait_50c: ;  cycles per line | cumulative
+          nop          ;  2c |  8c <- 6c jsr wait_50c
           jsr wait_12c ; 12c | 20c
 wait_36c: jsr wait_12c ; 12c | 32c 18c <- 6c jsr wait_36c
           jsr wait_12c ; 12c | 44c 30c
 wait_12c: rts          ;  6c | 50c 36c 12c <- 6c jsr wait_12c
 
-Joy1 = $4016
+Joy1 = $4016 ; TODO document these.
 Joy2 = $4017
 
 kb_stopscan: ; 98c: flag keys: rshift->bcc, stop->beq.
@@ -404,7 +417,7 @@ RomPalette:
 
 .code ; INTERRUPTS ------------------------------------------
 
-DmcFreq = $4010
+DmcFreq = $4010 ; TODO document.
 
 reset: ; just powered on, turn off all the things:
     _ sei, cld ; irq, decimal mode
@@ -431,7 +444,7 @@ reset: ; just powered on, turn off all the things:
 :   _ bit PpuStatus, bpl :- ; second frame
     _ jsr page, jmp main ; clear bg, start nmi, start main
 
-nmi: ; 2270c deadline to finish drawing
+nmi: ; vblank: 2270c deadline to finish drawing
     _ bit Config, bvc :+ ; default nmi service?
     jmp (Nmi) ; no, custom
 :   _ pha, tya, pha ; subroutines responsible for x.
@@ -445,16 +458,10 @@ nmi: ; 2270c deadline to finish drawing
     _ lda #0, sta Mutex ; unlock next frame
 :   _ pla, tay, pla, rti
 
-irq:
+irq: ; unused, but configurable.
     _ bit Config, bpl :+
     jmp (Irq)
 :   rti
-
-.segment "VECTORS" ; nes hardware boilerplate:
-
-.addr nmi   ; at vblank
-.addr reset ; at power on and reset
-.addr irq   ; unused by default
 
 .code ; FORTH -----------------------------------------------
 
