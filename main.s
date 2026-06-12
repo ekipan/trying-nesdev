@@ -283,18 +283,10 @@ draw: ; ~2240c left after nmi prologue.
 
 ; sending, synching:
 
-to_v: ; ( addr -- ) append address to queue.
-    Lda H,x         ; queue expects big-endian!
-    jsr a_to_v
-c_to_v: ; ( c -- ) append byte to queue.
-    lda L,x
-    inx
-a_to_v:
+a_to_v: ; append a byte to queue.
     ldy VHead
     sta VCmds,y
-    iny             ; full page buffer, expects wraparound.
-    sty VHead
-    rts
+    _ inc VHead, rts
 
 vcommit: ; ( -- ) send queued draw commands.
     _ lda VHead, sta VCommit, rts
@@ -321,9 +313,9 @@ ya_vaddr:
     _ lda #$00, sta W           ; W %00000000  y %??rrrrrr
     _ tya, asl, asl, asl, rol W ; W %0000000r  a %rrrrr000
     _ asl, rol W, asl, rol W    ; W %00000rrr  a %rrr00000
-    _ ldy W, ora W+1, jsr push_ya ; ( offset )
-    _ ldy #$24, lda #$00, jsr push_ya ; ( offset base )
-    _ jsr plus, jmp to_v
+    _ ora W+1, sta W+1
+    _ lda W, clc, adc #$24, jsr a_to_v ; vaddrh
+    _ lda W+1, jmp a_to_v ; vaddrl
 
 rawemit: ; ( c -- ) display a character.
     _ jsr csr_vaddr, inc CsrCol
