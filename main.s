@@ -324,6 +324,8 @@ draw: ; ~2240c left after nmi prologue.
 
 vbyte: ; append a byte to queue.
     ldy VHead
+    ; TODO bounds check VTail then vsync? lots of degenerate
+    ; edge cases. needs research.
     sta VCmds,y
     _ inc VHead, rts
 
