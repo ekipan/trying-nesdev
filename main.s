@@ -6,7 +6,7 @@
 ; to jump around, grep for:
 ; /code_label:/ /DataLabel:/ /ConstantLabel =/
 
-; I HATE BOILERPLATE ----------------------------------------
+; I HATE SCROLLING ------------------------------------------
 
 ; time for a bad first impression! check this out:
 
@@ -31,9 +31,14 @@
 .endmacro  ; eg: _ lda $20 x, sta ($40) y, jmp foo
 ; rule: loads at start, 0/1 branches at end.
 
+; MY IRONCLAD BELIEF: code is easier to read when I don't
+; have to constantly scroll up and down, losing context. it
+; should be *right there*, as much as I can fit on-screen.
+; you can disagree, but you're wrong.
+
 ; it does break the debugger's source view but I've found
 ; mesen's disassembly view to be sufficient for my needs.
-; might reconsider if it becomes a problem. dense code ahead.
+; might reconsider if it becomes a problem.
 
 ; more macros planned: dict assembly, maybe some overlapping
 ; instruction shenanigans if I'm feeling cute. it's good
