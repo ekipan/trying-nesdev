@@ -84,7 +84,7 @@ VSend =  $a2 ; args: len val1 val2 val3 ...
 VFill =  $a3 ; args: len val
 VMove =  $a4 ; args: len addrh addrl
 VPace =  $a5 ; stop drawing until next frame
-; unknown opcodes dump the queue: resetting head to commit.
+; unknown opcodes drop the queue, moving VTail to VCommit.
 
 ; tty driver:
 CsrCol: .res 1 ; 0-31, width of screen.
