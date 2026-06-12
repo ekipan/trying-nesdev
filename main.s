@@ -350,7 +350,7 @@ vsync: ; ( -- ) wait for next vblank.
 csr_vaddr: ; put cursor vaddr onto draw queue.
     _ ldy CsrRow, lda CsrCol
 ya_vaddr:
-    sta W+1 ; compute: $2400 + ((y & 63) << 5 | a)
+    _ and #$1f, sta W+1 ; compute: $2400 + ((y&63)<<5|(a&31))
     _ lda #$00, sta W           ; W %00000000  y %??rrrrrr
     _ tya, asl, asl, asl, rol W ; W %0000000r  a %rrrrr000
     _ asl, rol W, asl, rol W    ; W %00000rrr  a %rrr00000
