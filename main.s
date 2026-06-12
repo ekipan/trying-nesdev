@@ -206,7 +206,7 @@ draw: ; ~2240c left after nmi prologue.
     _ lda #$00, sta OamAddr ; \ costs
     _ lda #>Oam, sta OamDma ; / 521c
 :   ; load palette:
-    _ lda #1, and Config, beq :++ ; upload palette?
+    _ lda Config, lsr, bcc :++ ; no palette change?
     _ lda #$3f, ldy #0, sta PpuAddr, sty PpuAddr ; $3f00-3f1f
     _ sty PpuCtrl, dec Config ; horiz mode, clear flag, upload:
 :   lda Palette,y ; \ txfer   4c \ 15c * 32 = 480c
