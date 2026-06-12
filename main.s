@@ -243,15 +243,21 @@ draw: ; ~2240c left after nmi prologue.
     _ lda VCtrl, ora #$84, sta PpuCtrl
     bne @loop
 @send: ; (x)y=len val1 val2 val3 ...
+    ; assume 1b sends are the common case and don't unroll.
 :   inx
     lda VCmds,x     ; val#
     _ sta PpuData, dey, bne :-
     beq @inx_and_loop
 @fill: ; (x)y=len val
+    ; unroll to lower overhead. 32b: 293c->251c, 1b: 14c->21c
+    _ tya, lsr      ; c = odd len?
     inx
     lda VCmds,x     ; val
-:   _ sta PpuData, dey, bne :-
-    beq @inx_and_loop
+    bcs :++
+:   _ sta PpuData, dey
+:   _ sta PpuData, dey
+    bne :--
+    beq @inx_and_loop ; <- unrolls measured from tya to here.
 @set_addr: ; a=$hh (x)y=$ll
     ; rely on caller to reset latch, save 4c:
     ;bit PpuStatus ; draw bugs? uncomment first (!!)
@@ -288,10 +294,14 @@ draw: ; ~2240c left after nmi prologue.
     inx
     lda VCmds,x ; $ll
     sta V       ; read addr low
+    ; unrolled. 32b: 566c->486c, 1b: 18c->25c
+    _ tya, lsr  ; c = odd len?
     ldy #0      ; scan fwd from 0 to len:
-:   lda (V),y
-    _ sta PpuData, iny, cpy V+2, bne :-
-    beq @inx_and_loop
+    bcs :++
+:   _ lda (V) y, sta PpuData, iny
+:   _ lda (V) y, sta PpuData, iny
+    _ cpy V+2, bne :--
+    beq @inx_and_loop ; <- unrolls measured tya to here.
 @pace: ; end frame and defer to next nmi if we've drawn
     ; Mutex: draw stores 1, @horiz inc's, so 2 = no draws:
     _ lda Mutex, cmp #$02, beq @decode ; no draws yet?
