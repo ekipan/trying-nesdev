@@ -119,7 +119,6 @@ CsrCol: .res 1 ; 0-31, width of screen.
 CsrRow: .res 1 ; 0-253, except seam rows 30,31,62,63 etc
 ; vaddr calc drops CsrRow.6-7, so effectively 0-29,32-61.
 ; last two columns are in overscan caution zone.
-; https://www.nesdev.org/wiki/Overscan
 ; TODO reconsider design, might fix CsrRow in 0-59 instead.
 
 ; forth interpreter:
@@ -394,8 +393,11 @@ page: ; ( -- ) init and clear the screen.
     _ jsr palette_move ; and set the default palette:
     _ lda #>RomPalette, jsr vbyte
     _ lda #<RomPalette, jsr vbyte, jsr vcommit
-    _ lda #$f8, sta VSclX, sta VSclY ; inside overscan, TODO y.
-    _ lda #$80, sta VCtrl, sta PpuCtrl ; enable nmi.
+    ; scroll cursor in from the bottom of ntb2:
+    _ lda #$f8, sta VSclX ; 1 col left  \ overscan
+    _ lda #$18, sta VSclY ; 3 rows down / blue area.
+    ; https://www.nesdev.org/wiki/Overscan
+    _ lda #$82, sta VCtrl, sta PpuCtrl ; enable nmi, ntb2.
     jsr vsync ; also frees the Mutex.
     ; clear nametables 1 and 2, see illustration below:
     _ stx W ; save pstack
