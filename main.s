@@ -205,40 +205,40 @@ kb_fullscan: ; scan the entire keyboard.
     _ dey, bpl :-      ;  5c 41c -> : 4c+5c 50c  more rows?
     ;
     ; now for the hard part, interpreting KbDown key event
-    ; bits into scancodes to push onto the KbBuf queue:
+    ; bits into scancodes to push onto the KbBuf queue.
+    ;
+    _ @Shift = K+0, @SC = K+1, @TmpX = K+2, @TmpY = K+3
     ;
     _ jsr @is_queue_full, beq kb_noscan
-    stx K+3 ; save pstack to scratch.
-    _ lda #0, sta K+2 ; K+2 = 0/72 shifted scancode offset.
+    stx @TmpX ; save pstack.
+    _ lda #0, sta @Shift ; 0/72 scancode offset when shift held:
     _ lda KbHeld+8, and #2, bne :+  ; rshift row 0 key 1
     _ lda KbHeld+1, and #1, beq :++ ; lshift row 7 key 0
-:   _ lda #72, sta K+2
+:   _ lda #72, sta @Shift
 :   ; what a big tangly mess!
-    ; x row byte index  K+3 pstack stash   K+2 shift state
-    ; y key bit index   K+0 key bit stash  K+1 scancode calc
     ldx #0 ; x = 0->8 row byte index.
   @scan_all:
     _ lda KbDown x, bne @scan_row ; presses on row x?
   @next_row:
     _ inx, cpx #9, bne @scan_all, beq @done
   @scan_row:
-    ldy #0 ; y = 0->7 key bit index.
+    ldy #0 ; y = 0->7 key bit index. inner loop:
   @scan_bit:
     _ lda KbDown x, and Bitmasks y, bne @buffer_key
     _ iny, cpy #8, bne @scan_bit, beq @next_row
-  @buffer_key:
-    _ txa, asl, asl, asl, sta K+1, clc ; %0rrrr000
-    _ tya, ora K+1, adc K+2, sta K+1   ; %0rrrrccc + 0/72
+  @buffer_key: ; compute and store scancode:
+    _ txa, asl, asl, asl, sta @SC, clc  ; %0rrrr000
+    _ tya, ora @SC, adc @Shift, sta @SC ; %0rrrrccc + 0/72
     _ lda KbHead, and #KbLen-1 ; masked ringbuf index
-    sty K ; stash bit index, append to queue:
-    _ tay, lda K+1, sta KbBuf y, inc KbHead
-    ldy K ; restore bit index.
+    sty @TmpY ; stash bit index, append to queue:
+    _ tay, lda @SC, sta KbBuf y, inc KbHead
+    ldy @TmpY ; restore bit index.
     _ jsr @is_queue_full, beq @done
     _ iny, cpy #8, bne @scan_bit, beq @next_row
 @is_queue_full: ; subroutine. flag: head - tail == len?
     _ lda KbHead, sec, sbc KbTail, cmp #KbLen, rts
 @done:
-    ldx K+3 ; restore pstack.
+    ldx @TmpX ; restore pstack.
     ;
     ; then last, a bit of convenience for the caller:
     ;
