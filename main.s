@@ -145,7 +145,6 @@ KbDown:  .res 9 ; precomputed down-edges Prev->Held.
 
 .code ; KB DRIVER -------------------------------------------
 
-; https://www.nesdev.org/wiki/Family_BASIC_Keyboard#Usage
 ; https://lira.kraamwinkel.be/articles/nes_keyboard
 ; not much here yet. experimenting.
 
@@ -156,14 +155,21 @@ wait_36c: jsr wait_12c ; 12c | 32c 18c <- 6c jsr wait_36c
           jsr wait_12c ; 12c | 44c 30c
 wait_12c: rts          ;  6c | 50c 36c 12c <- 6c jsr wait_12c
 
-Joy1 = $4016 ; TODO document these.
-Joy2 = $4017
+kb_noscan: ; 22c: read most recent stop/rshift into flags.
+    _ lda KbHeld+8 ; row 0 stop/rshift: %kkkkskrk
+kb_flags: ; stop->nz (bne), rshift->c (bcs).
+    _ lsr, lsr, and #2, rts
 
-kb_stopscan: ; 98c: flag keys: rshift->bcc, stop->beq.
+; https://www.nesdev.org/wiki/Family_BASIC_Keyboard#Hardware_interface
+Joy1 = $4016 ; %?????mcr strobe matrix, select column, reset.
+Joy2 = $4017 ; %???kkkk? 0 = keys held on current row/column.
+; switching Joy1.1 high to low advances to next row.
+
+kb_stopscan: ; 105c: scan just stop/rshift into flags.
     _ lda #5, sta Joy1, jsr wait_12c ; reset to row 0.
-    _ lda #6, sta Joy1, jsr wait_50c, lda Joy2 ; read col 1.
-kb_flags: ; %???sxrx? <- stop and rshift keys 0 = held.
-    _ lsr, lsr, lsr, and #2, rts ; nc=rshift, z=stop.
+    _ lda #6, sta Joy1, jsr wait_50c ; strobe col 1.
+    _ lda Joy2, eor #$ff, lsr ; read, parse: %0???skrk
+    jmp kb_flags
 
 kb_fullscan: ; >1200c: scan the entire keyboard.
     ; 9 rows * 2 cols * 4 bits = 72 keys.
@@ -172,8 +178,8 @@ kb_fullscan: ; >1200c: scan the entire keyboard.
     _ lda #4, sta Joy1 ; strobe column 0. wait 50c:
     ; interleave work while waiting for the matrix to settle:
     ; cycle counts:     line accum
-    jsr wait_36c       ; 36c 36c
-    _ bit 0, ldy #8    ;  5c 41c  scan 9 rows: 8-0.
+    _ jsr wait_36c, bit 0 ;  39c
+    ldy #8             ;  2c 41c  scan 9 rows: 8-0.
 :   lda KbHeld,y       ;  4c 45c  \ save previous scan
     sta KbPrev,y       ;  5c 50c  / while we're here.
     _ lda Joy2, sta K  ; read column 0: %???kkkk? 0 = held
@@ -195,8 +201,7 @@ kb_fullscan: ; >1200c: scan the entire keyboard.
     _ nop, nop         ;  4c 36c
     _ dey, bpl :-      ;  5c 41c -> : 4c+5c 50c  more rows?
     ; TODO scan the press events and push to a keys buffer.
-    _ lda KbHeld+8, asl, eor #$ff ; restore raw row 0 col 1.
-    jmp kb_flags ; nc=rshift, z=stop.
+    jmp kb_noscan ; flag stop/rshift.
 
 .code ; VIDEO DRIVER ----------------------------------------
 
@@ -444,7 +449,7 @@ nmi: ; vblank: 2270c deadline to finish drawing
     ; TODO poll Joy1? sound?
     jsr kb_fullscan ; >1200c, 10.6 scanlines
     ; jsr kb_stopscan ; TODO configurable scan type.
-    beq reset ; pressed stop? TODO recover instead.
+    bne reset ; pressed stop? TODO recover instead.
     _ lda #0, sta Mutex ; unlock next frame
 :   _ pla, tay, pla, rti
 
