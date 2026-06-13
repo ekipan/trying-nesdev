@@ -108,9 +108,9 @@ VTail:   .res 1 ; 3) draw interprets and moves fwd.
 ;        addresses are less likely to be misinterpreted:
 VHoriz = $a0 ; \ reset/set increment mode
 VVert =  $a1 ; / bit PpuCtrl.1 (+1/32)
-VSend =  $a2 ; args: len val1 val2 val3 ...
+VPut =   $a2 ; args: len val1 val2 val3 ...
 VFill =  $a3 ; args: len val
-VMove =  $a4 ; args: len addrh addrl
+VSend =  $a4 ; args: len addrh addrl
 VPace =  $a5 ; stop drawing until next frame
 ; unknown opcodes drop the queue, moving VTail to VCommit.
 
@@ -255,7 +255,7 @@ draw: ; ~2240c left after nmi prologue.
 @vert: ; incrmode bit set (+32)
     _ lda VCtrl, ora #$84, sta PpuCtrl
     bne @loop
-@send: ; (x)y=len val1 val2 val3 ...
+@put: ; (x)y=len val1 val2 val3 ...
     ; assume 1b sends are the common case and don't unroll.
 :   inx
     lda VCmds,x     ; val#
@@ -288,10 +288,10 @@ draw: ; ~2240c left after nmi prologue.
     ldy VCmds,x     ; a=opcode (x)y=(arg1) (...)
     ; in order of likeliness, to squeeze cycles:
     _ cmp #$40, bcc @set_addr ; $0-3f, valid ppu page?
-    _ cmp #VSend, beq @send   ; workhorse draw
+    _ cmp #VPut, beq @put     ; workhorse draw
     _ cmp #VFill, beq @fill   ; clearing/blocking out
     _ cmp #VPace, beq @pace   ; separate batches
-    _ cmp #VMove, beq @move   ; usually during setup
+    _ cmp #VSend, beq @send   ; usually during setup
     _ cmp #VVert, beq @vert   ; switch to columns
     _ cmp #VHoriz, beq @horiz ; back to default
     ; malformed command.
@@ -299,7 +299,7 @@ draw: ; ~2240c left after nmi prologue.
     ldx VCommit
   @rts:
     rts
-@move: ; (x)y=len $hh $ll
+@send: ; (x)y=len $hh $ll
     sty V+2     ; len
     inx
     lda VCmds,x ; $hh
@@ -320,17 +320,7 @@ draw: ; ~2240c left after nmi prologue.
     _ lda Mutex, cmp #$02, beq @decode ; no draws yet?
     rts
 
-; sending, synching:
-
-vbyte: ; append a byte to queue.
-    ldy VHead
-    ; TODO bounds check VTail then vsync? lots of degenerate
-    ; edge cases. needs research.
-    sta VCmds,y
-    _ inc VHead, rts
-
-vcommit: ; ( -- ) send queued draw commands.
-    _ lda VHead, sta VCommit, rts
+.code ; TTY DRIVER ------------------------------------------
 
 vsync: ; ( -- ) wait for next vblank.
     _ lda #0, sta Mutex ; TODO stash and restore?
@@ -338,7 +328,15 @@ vsync: ; ( -- ) wait for next vblank.
 :   _ cmp Frames, beq :-
     rts
 
-.code ; TTY DRIVER ----------------------------------------
+vcommit: ; ( -- ) send queued draw commands.
+    _ lda VHead, sta VCommit, rts
+
+vcmd: ; append a byte to the queue.
+    ldy VHead
+    ; TODO vsync to progress if VHead at VTail? probably
+    ; lots of degenerate edge cases. needs research.
+    sta VCmds,y
+    _ inc VHead, rts
 
 ; nw ntb0 -> [ $2000-23ff ][ $2400-27ff ] <- ne ntb1  \ 1k
 ; sw ntb2 -> [ $2800-2bff ][ $2c00-2fff ] <- se ntb3  / each
@@ -347,44 +345,44 @@ vsync: ; ( -- ) wait for next vblank.
 ; mirroring either horizontally or vertically. ntb1 and 2 are
 ; contiguous in memory and pair with both configurations.
 
-csr_vaddr: ; put cursor vaddr onto draw queue.
+vaddr_csr: ; put cursor vaddr onto draw queue.
     _ ldy CsrRow, lda CsrCol
-ya_vaddr:
+vaddr_ya:
     _ and #$1f, sta W+1 ; compute: $2400 + ((y&63)<<5|(a&31))
     _ lda #$00, sta W           ; W %00000000  y %??rrrrrr
     _ tya, asl, asl, asl, rol W ; W %0000000r  a %rrrrr000
     _ asl, rol W, asl, rol W    ; W %00000rrr  a %rrr00000
     _ ora W+1, sta W+1
-    _ lda W, clc, adc #$24, jsr vbyte ; vaddrh
-    _ lda W+1, jmp vbyte ; vaddrl
+    _ lda W, clc, adc #$24, jsr vcmd ; vaddrh
+    _ lda W+1, jmp vcmd ; vaddrl
 
 rawemit: ; ( c -- ) display a character.
-    _ jsr csr_vaddr, inc CsrCol
+    _ jsr vaddr_csr, inc CsrCol
     _ lda CsrCol, cmp #32, bcc :+ ; still on screen?
     jsr cr ; no: go to next line
-:   _ lda #VSend, jsr vbyte, lda #1, jsr vbyte ; send one
-    _ lda L x, inx, jsr vbyte, jmp vcommit     ; character
+:   _ lda #VPut, jsr vcmd, lda #1, jsr vcmd ; put one
+    _ lda L x, inx, jsr vcmd, jmp vcommit   ; character
 
 cr: ; ( -- ) move the cursor to the start of next line.
-    _ lda #VPace, jsr vbyte ; 64b is risky, pace before/after.
+    _ lda #VPace, jsr vcmd ; 64b is risky, pace before/after.
     _ lda #$00, sta CsrCol  ; col = 0, increment row:
     _ ldy CsrRow, jsr @iny, sty CsrRow, jsr @clear ; and clear.
     _ ldy CsrRow, jsr @iny, jsr @clear ; and below screen.
     ; TODO scroll.
-    _ lda #VPace, jsr vbyte, jmp vcommit
+    _ lda #VPace, jsr vcmd, jmp vcommit
 @iny:
     _ iny, tya, and #31, cmp #30, bcc :+ ; still in-screen?
     _ iny, iny ; pass over attrtable seam.
 :   rts
 @clear:
-    _ lda #0, jsr ya_vaddr  ; at row address:
-    _ lda #VFill, jsr vbyte ; fill
-    _ lda #32, jsr vbyte    ; an entire row
-    _ lda #' ', jmp vbyte   ; with spaces
+    _ lda #0, jsr vaddr_ya ; at row address:
+    _ lda #VFill, jsr vcmd ; fill
+    _ lda #32, jsr vcmd    ; an entire row
+    _ lda #' ', jmp vcmd   ; with spaces
 
 palette_move:
-    _ lda #$3f, jsr vbyte, lda #0, jsr vbyte ; to $3f00-1f
-    _ lda #VMove, jsr vbyte, lda #32, jmp vbyte ; send 32b
+    _ lda #$3f, jsr vcmd, lda #0, jsr vcmd    ; to $3f00
+    _ lda #VSend, jsr vcmd, lda #32, jmp vcmd ; send 32b
 
 page: ; ( -- ) init and clear the screen.
     ; called on reset, must enable nmi directly! but *also*
@@ -393,8 +391,8 @@ page: ; ( -- ) init and clear the screen.
     _ lda #0, sta Config, sta VMask, sta CsrRow, sta CsrCol
     _ sta VCommit, sta VTail, sta VHead ; delete the queue
     _ jsr palette_move ; and set the default palette:
-    _ lda #>RomPalette, jsr vbyte
-    _ lda #<RomPalette, jsr vbyte, jsr vcommit
+    _ lda #>RomPalette, jsr vcmd
+    _ lda #<RomPalette, jsr vcmd, jsr vcommit
     ; scroll cursor in from the bottom of ntb2:
     _ lda #$f8, sta VSclX ; 1 col left  \ overscan
     _ lda #$18, sta VSclY ; 3 rows down / blue area.
