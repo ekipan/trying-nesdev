@@ -1,6 +1,4 @@
 
-# Forever TODO: sync this and README with the actual status.
-
 ## A noninteractive demo and in-progress kb/tty drivers so
 ## far. Hopes: a fast, fun NES Forth akin to durexForth.
 #:
@@ -12,20 +10,16 @@ MESEN ?= Mesen ## NES emulator with debugging features.
 
 # Cartridge configuration:
 
-# nes cartridge configurations vary wildly. emulators support
-# a huge range, but I still need to study the constraints of
-# a feasibly realizable cart (TODO). I'm not very interested
-# in making one but I'd like it to be possible.
+# I'm not very interested in making a real cart but I'd like
+# it to be possible. Need to study the constraints more.
+# Sketch: one scratch PRG-RAM bank mostly reserved to compile
+# user code. NES powerdown risks PRG-RAM corruption via random
+# instructions. Fine for scratch.
 #
-# one scratch prg-ram bank: oam? drawqueue? blockbuffer?
-# the rest to compile user code and dictionary entries into.
-# nes powerdown risks prg-ram corruption via random
-# instructions. fine for scratch.
-#
-# in lieu of studying the tape recorder (TODO), I'd wish for
-# extra prg-ram banks to store user source code and data
-# blocks long term. risk of rogue bank-switch then corruption
-# is probably astronomical. would be curious.
+# In lieu of studying the tape recorder I'd wish for extra
+# PRG-RAM banks for long-term user BLOCK storage. Risk of
+# rogue bank-switch then corruption is probably astronomical.
+# Would be curious.
 
 # https://www.nesdev.org/wiki/Mapper
 MAPPER = 0# $smmm: w/ sub. 0 nrom, 1 mmc1, 218 nesmon's
@@ -37,10 +31,8 @@ PSRAM  = 0# | save-ram: battery-backed.
 CWRAM  = 0# | work-ram: volatile.
 CSRAM  = 0# / prg on cpu, chr on ppu bus
 PERIPH = 0x23# $0-4f: 0 none, 1 joypad, $23 basic keyboard
-
-# these are embedded in the INES segment in main.s. then the
-# linker script nes.ld decides where to put the bytes in the
-# binary file and resolves pointers among segments.
+# These embed into the INES segment in main.s. Then nes.ld
+# arranges bytes in the .nes file and resolves pointers.
 
 CART = -D MAPPER=$(MAPPER) -D MIRROR=$(MIRROR) \
 -D PROM=$(PROM) -D PWRAM=$(PWRAM) -D PSRAM=$(PSRAM) \
