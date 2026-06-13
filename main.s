@@ -69,7 +69,7 @@ H:           ; / to pass data between words. depth 1: x = $ff.
 
 ; scratch space:
 V:   .res 3 ; draw scratch.       \ interrupt
-K:   .res 2 ; kb scanner scratch. / routines.
+K:   .res 4 ; kb scanner scratch. / routines.
 W:   .res 2 ; general forth scratch.
 Src: .res 2 ; \ pointers for y-indexed
 Dst: .res 2 ; / transfer of multiple bytes.
@@ -85,7 +85,12 @@ Mutex:  .res 1 ; nonzero: nmi locked, plus draw tally.
 ; a degenerate draw queue eventually tallies Mutex to 128+,
 ; the draw interpreter abandons, nmi recovers. TODO xref
 
-; video driver:
+; kb driver:  K KbPrev KbHeld KbDown KbBuf
+KbHead: .res 1 ; 1) scanner adds. \ $0-ff KbBuf bounds,
+KbTail: .res 1 ; 2) main takes.   / modulo KbLen.
+KbLen = 4 ; power of 2. head - tail <= len, modulo 256.
+
+; video driver:  V VCmds
 VCtrl:  .res 1 ; \ shadow registers. sent next draw, except
 VMask:  .res 1 ; | VCtrl.7 ignored: nmi is kept enabled.
 VSclX:  .res 1 ; | careful of data races. for synchronous
@@ -127,9 +132,10 @@ VCmds: .res 256  ; encoded drawing commands queue.
 
 .data ; $6000-60ff buffers on cart.
 
-KbPrev:  .res 9 ; \ 72 bits array of scanned keystates.
+KbPrev:  .res 9 ; \ 72 bits arrays of scanned keystates.
 KbHeld:  .res 9 ; / 0 = unheld, 1 = held.
 KbDown:  .res 9 ; precomputed down-edges Prev->Held.
+KbBuf: .res KbLen ; scancodes: 0-71, +72 shift held.
 
 ; $6100-7fff - ram
 ;   reserved for scratch to compile user programs into. long
@@ -145,8 +151,7 @@ KbDown:  .res 9 ; precomputed down-edges Prev->Held.
 
 .code ; KB DRIVER -------------------------------------------
 
-; https://lira.kraamwinkel.be/articles/nes_keyboard
-; not much here yet. experimenting.
+; in-progress. next: higher-level key queue pull.
 
 wait_50c: ;  cycles per line | cumulative
           nop          ;  2c |  8c <- 6c jsr wait_50c
@@ -154,11 +159,6 @@ wait_50c: ;  cycles per line | cumulative
 wait_36c: jsr wait_12c ; 12c | 32c 18c <- 6c jsr wait_36c
           jsr wait_12c ; 12c | 44c 30c
 wait_12c: rts          ;  6c | 50c 36c 12c <- 6c jsr wait_12c
-
-kb_noscan: ; 22c: read most recent stop/rshift into flags.
-    _ lda KbHeld+8 ; row 0 stop/rshift: %kkkkskrk
-kb_flags: ; stop->nz (bne), rshift->c (bcs).
-    _ lsr, lsr, and #2, rts
 
 ; https://www.nesdev.org/wiki/Family_BASIC_Keyboard#Hardware_interface
 Joy1 = $4016 ; %?????mcr strobe matrix, select column, reset.
@@ -169,9 +169,12 @@ kb_stopscan: ; 105c: scan just stop/rshift into flags.
     _ lda #5, sta Joy1, jsr wait_12c ; reset to row 0.
     _ lda #6, sta Joy1, jsr wait_50c ; strobe col 1.
     _ lda Joy2, eor #$ff, lsr ; read, parse: %0???skrk
-    jmp kb_flags
+    ; TODO store into KbHeld? decouple flags?
+    jmp kb_flags ; way at the bottom of:
 
-kb_fullscan: ; >1200c: scan the entire keyboard.
+; 1245c full buffer, 1393c idle, 1608c buffer +1:
+
+kb_fullscan: ; scan the entire keyboard.
     ; 9 rows * 2 cols * 4 bits = 72 keys.
     _ lda #5, sta Joy1 ; reset keyboard to row 0.
     jsr wait_12c
@@ -200,8 +203,52 @@ kb_fullscan: ; >1200c: scan the entire keyboard.
     sta KbDown,y       ;  5c 32c  i.e. pressed
     _ nop, nop         ;  4c 36c
     _ dey, bpl :-      ;  5c 41c -> : 4c+5c 50c  more rows?
-    ; TODO scan the press events and push to a keys buffer.
-    jmp kb_noscan ; flag stop/rshift.
+    ;
+    ; now for the hard part, interpreting KbDown key event
+    ; bits into scancodes to push onto the KbBuf queue:
+    ;
+    _ jsr @is_queue_full, beq kb_noscan
+    stx K+3 ; save pstack to scratch.
+    _ lda #0, sta K+2 ; K+2 = 0/72 shifted scancode offset.
+    _ lda KbHeld+8, and #2, bne :+  ; rshift row 0 key 1
+    _ lda KbHeld+1, and #1, beq :++ ; lshift row 7 key 0
+:   _ lda #72, sta K+2
+:   ; what a big tangly mess!
+    ; x row byte index  K+3 pstack stash   K+2 shift state
+    ; y key bit index   K+0 key bit stash  K+1 scancode calc
+    ldx #0 ; x = 0->8 row byte index.
+  @scan_all:
+    _ lda KbDown x, bne @scan_row ; presses on row x?
+  @next_row:
+    _ inx, cpx #9, bne @scan_all, beq @done
+  @scan_row:
+    ldy #0 ; y = 0->7 key bit index.
+  @scan_bit:
+    _ lda KbDown x, and Bitmasks y, bne @buffer_key
+    _ iny, cpy #8, bne @scan_bit, beq @next_row
+  @buffer_key:
+    _ txa, asl, asl, asl, sta K+1, clc ; %0rrrr000
+    _ tya, ora K+1, adc K+2, sta K+1   ; %0rrrrccc + 0/72
+    _ lda KbHead, and #KbLen-1 ; masked ringbuf index
+    sty K ; stash bit index, append to queue:
+    _ tay, lda K+1, sta KbBuf y, inc KbHead
+    ldy K ; restore bit index.
+    _ jsr @is_queue_full, beq @done
+    _ iny, cpy #8, bne @scan_bit, beq @next_row
+@is_queue_full: ; subroutine. flag: head - tail == len?
+    _ lda KbHead, sec, sbc KbTail, cmp #KbLen, rts
+@done:
+    ldx K+3 ; restore pstack.
+    ;
+    ; then last, a bit of convenience for the caller:
+    ;
+kb_noscan: ; 22c: read most recent stop/rshift into flags.
+    _ lda KbHeld+8 ; row 0 stop/rshift: %kkkkskrk
+kb_flags: ; stop->nz (bne), rshift->c (bcs).
+    _ lsr, lsr, and #2, rts
+
+Bitmasks:
+    .byte 1, 2, 4, 8, $10, $20, $40, $80
 
 .code ; VIDEO DRIVER ----------------------------------------
 
