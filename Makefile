@@ -49,7 +49,7 @@ CART = -D MAPPER=$(MAPPER) -D MIRROR=$(MIRROR) \
 
 CAOPT ?= -g -l $@.lst
 LDOPT ?= --dbgfile $@.dbg -Ln $@.lbl -m $@.map
-LDIN ?= nes.ld o/main.o o/fat.o
+LDIN ?= nes.ld o/main.o o/font.o
 
 ## Build targets:
 
