@@ -14,6 +14,7 @@ MESEN ?= Mesen ## NES emulator with debugging features.
 $ nix-shell # Get cc65 and Mesen if you have Nix.
 $ # or get them with your favorite package manaager.
 $ make run # Look at the text scroll!
+$ vim main.s # Lots of stuff I've only tested via debugger.
 ```
 
 - https://cc65.github.io/
