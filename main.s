@@ -2,9 +2,12 @@
 ; experiments and studies towards a family forth.
 ; a goal is to port <https://github.com/ekipan/sss> to it.
 ; lots of TODO design tradeoffs to consider.
+
+; contents: [x] macros [m] memory map [k] keyboard
+;   [v] video [t] tty [i] interrupts [f] forth
 ;
-; to jump around, grep for:
-; /code_label:/ /DataLabel:/ /ConstantLabel =/
+; jump around by grepping crossref markers or names:
+;   /\[v0\]/ /code_label:/ /DataLabel:/ /ConstantName =/
 
 .segment "VECTORS" ; https://www.nesdev.org/wiki/CPU_memory_map
 .addr nmi, reset, irq ; look for "vectors" on that page.
@@ -18,7 +21,7 @@
 .byte 0, 0, 0, PERIPH ; 12-15
 ; see Makefile for cart config defines.
 
-; I HATE SCROLLING ------------------------------------------
+; [x] I HATE SCROLLING --------------------------------------
 
 ; time for a bad first impression! check this out:
 
@@ -50,7 +53,7 @@
 ; it does break mesen's source view but its disassembly view
 ; has proved wonderfully capable in my debugging.
 
-; MEMORY MAP ------------------------------------------------
+; [m] MEMORY MAP --------------------------------------------
 
 .zeropage ; $00-ff system state.
 
@@ -76,21 +79,21 @@ W:   .res 2 ; \ general forth scratch, with
 Src: .res 2 ; | pointers for y-indexed
 Dst: .res 2 ; / byte transfers.
 
-; global configuration:
+; global configuration [i]:
 Config: .res 1 ; %in?????? custom irq/nmi.
 Nmi:    .res 2 ; \ handler routine pointers. set Config
 Irq:    .res 2 ; / to 0 first to update atomically.
 Frames: .res 1 ; nmi count, for synching or delaying.
 Mutex:  .res 1 ; nonzero: nmi locked, plus draw tally.
 ; a degenerate draw queue eventually tallies Mutex to 128+,
-; the draw interpreter abandons, nmi recovers. TODO xref
+; the draw interpreter abandons, nmi recovers [v0].
 
-; kb driver:  K KbPrev KbHeld KbDown KbBuf
+; kb driver [k]:  K KbPrev KbHeld KbDown KbBuf
 KbHead: .res 1 ; 1) scanner adds. \ $0-ff KbBuf bounds,
 KbTail: .res 1 ; 2) main takes.   / modulo KbLen.
 KbLen = 4 ; power of 2. head - tail <= len, modulo 256.
 
-; video driver:  V VCmds
+; video driver [v]:  V VCmds
 VCtrl:  .res 1 ; \ shadow registers. sent next draw, except
 VMask:  .res 1 ; | VCtrl.7 ignored: nmi is kept enabled.
 VSclX:  .res 1 ; | careful of data races. for synchronous
@@ -102,32 +105,21 @@ VTail:   .res 1 ; 3) draw interprets and moves fwd.
 ; conceptually tail <= commit <= head, though since they
 ; wrap in memory that'll often not be literally true.
 
-; VCmds encodings:
-; $0-3f: set PpuAddr. other opcodes far away so overflowed
-;        addresses are less likely to be misinterpreted:
-VHoriz = $a0 ; \ reset/set increment mode
-VVert =  $a1 ; / bit PpuCtrl.1 (+1/32)
-VPut =   $a2 ; args: len val1 val2 val3 ...
-VFill =  $a3 ; args: len val
-VSend =  $a4 ; args: len addrh addrl
-VPace =  $a5 ; stop drawing until next frame
-; unknown opcodes drop the queue, moving VTail to VCommit.
-
-; tty driver:
+; tty driver [t]:
 CsrCol: .res 1 ; 0-31, width of screen.
 CsrRow: .res 1 ; 0-253, except seam rows 30,31,62,63 etc
 ; vaddr calc drops CsrRow.6-7, so effectively 0-29,32-61.
 ; last two columns are in overscan caution zone.
 ; TODO reconsider design, might fix CsrRow in 0-59 instead.
 
-; forth interpreter:
+; forth interpreter [f]:
 ; planned: Base, Here, Latest, Pending, InPtr, InEnd.
 
 .bss ; $200-7ff buffers on mainboard.
 
      .align 256
 Oam:   .res 256  ; sprites data, at $200 conventionally.
-VCmds: .res 256  ; encoded drawing commands queue.
+VCmds: .res 256  ; draw commands queue. encodings: [v1].
        .res 1024 ; (planned location of forth block buffer.)
 
 .data ; $6000-60ff buffers on cart.
@@ -149,7 +141,7 @@ KbBuf: .res KbLen ; scancodes: 0-71, +72 shift held.
 ; $c000-ffff - rom
 ;   nes hardware drivers and forth kernel.
 
-.code ; KB DRIVER -------------------------------------------
+.code ; [k] KB DRIVER ---------------------------------------
 
 ; in-progress. next: higher-level key queue pull.
 
@@ -250,7 +242,7 @@ kb_flags: ; stop->nz (bne), rshift->c (bcs).
 Bitmasks:
     .byte 1, 2, 4, 8, $10, $20, $40, $80
 
-.code ; VIDEO DRIVER ----------------------------------------
+.code ; [v] VIDEO DRIVER ------------------------------------
 
 ; https://www.nesdev.org/wiki/PPU
 ; the picture processing unit rejects i/o while drawing the
@@ -323,7 +315,7 @@ draw: ; ~2240c left after nmi prologue.
     _ sta PpuAddr, sty PpuAddr
   @inx_and_loop:
     inx
-  @loop:
+  @loop: ; [v0] prevent lock-up from a malformed queue:
     inc Mutex       ; reuse nmi lock to tally finished commands
     bmi @abandon    ; >127? probably a runaway queue
   @decode: ; x = cursor into page-aligned ring buffer.
@@ -366,7 +358,20 @@ draw: ; ~2240c left after nmi prologue.
     _ lda Mutex, cmp #$02, beq @decode ; no draws yet?
     rts
 
-.code ; TTY DRIVER ------------------------------------------
+; [v1] VCmds encodings:
+; $0-3f: set PpuAddr. other opcodes far away so overflowed
+;        addresses are less likely to be misinterpreted:
+VHoriz = $a0 ; \ reset/set increment mode
+VVert =  $a1 ; / bit PpuCtrl.1 (+1/32)
+VPut =   $a2 ; args: len val1 val2 val3 ...
+VFill =  $a3 ; args: len val
+VSend =  $a4 ; args: len addrh addrl
+VPace =  $a5 ; stop drawing until next frame
+; unknown opcodes drop the queue, moving VTail to VCommit.
+
+; TODO more high-level words to push commands.
+
+.code ; [t] TTY DRIVER --------------------------------------
 
 vsync: ; ( -- ) wait for next vblank.
     _ lda #0, sta Mutex ; TODO stash and restore?
@@ -463,7 +468,7 @@ RomPalette:
         .byte $0F, $29, $17, $20
     .endrepeat
 
-.code ; INTERRUPTS ------------------------------------------
+.code ; [i] INTERRUPTS --------------------------------------
 
 DmcFreq = $4010 ; TODO document.
 
@@ -505,7 +510,7 @@ irq: ; unused, but configurable.
     jmp (Irq)
 :   rti
 
-.code ; FORTH -----------------------------------------------
+.code ; [f] FORTH -------------------------------------------
 
 ; planned: core.s stack/math/memory, ui.s interpreter/compiler.
 
