@@ -64,17 +64,17 @@
      .res 32
 L:   .res 32 ; \ push-down, x-indexed, split parameter stack
 H:           ; / to pass data between words. depth 1: x = $ff.
-; splitting prevents x-misalignment and reduces
-; push/drop to a single dex/inx instruction.
+; - splitting prevents x-misalignment, and:
+; - permits push/pop with a single dex/inx instruction.
+; - user overflow wraps to free space at end of zeropage.
+; - shallow underflow damages scratch first:
 
 ; scratch space:
 V:   .res 3 ; draw scratch.       \ interrupt
 K:   .res 4 ; kb scanner scratch. / routines.
-W:   .res 2 ; general forth scratch.
-Src: .res 2 ; \ pointers for y-indexed
-Dst: .res 2 ; / transfer of multiple bytes.
-; an underflowed pstack only corrupts scratch first, hopefully
-; mitigating damage. overflow wraps to the end of zeropage.
+W:   .res 2 ; \ general forth scratch, with
+Src: .res 2 ; | pointers for y-indexed
+Dst: .res 2 ; / byte transfers.
 
 ; global configuration:
 Config: .res 1 ; %in?????? custom irq/nmi.
