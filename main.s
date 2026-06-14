@@ -296,13 +296,12 @@ draw: ; ~2240c left after nmi prologue.
 @put: ; (x)y=len val1 val2 val3 ...
     ; assume 1b sends are the common case and don't unroll.
 :   inx
-    lda VCmds,x     ; val#
-    _ sta PpuData, dey, bne :-
+    _ lda VCmds x, sta PpuData, dey, bne :-
     beq @inx_and_loop
 @fill: ; (x)y=len val
-    ; unroll to lower overhead. 32b: 293c->251c, 1b: 14c->21c
-    _ tya, lsr      ; c = odd len?
     inx
+    ; unroll to lower overhead. 32b: 291c->249c, 1b: 12c->19c
+    _ tya, lsr      ; c = odd len?
     lda VCmds,x     ; val
     bcs :++
 :   _ sta PpuData, dey
@@ -338,20 +337,17 @@ draw: ; ~2240c left after nmi prologue.
   @rts:
     rts
 @send: ; (x)y=len $hh $ll
-    sty V+2     ; len
-    inx
-    lda VCmds,x ; $hh
-    sta V+1     ; read addr high
-    inx
-    lda VCmds,x ; $ll
-    sta V       ; read addr low
+    _ @Ptr = V+0, @Len = V+2 ; local scratch names:
+    _ sty @Len, inx
+    _ lda VCmds x, sta @Ptr+1, inx
+    _ lda VCmds x, sta @Ptr
     ; unrolled. 32b: 566c->486c, 1b: 18c->25c
     _ tya, lsr  ; c = odd len?
     ldy #0      ; scan fwd from 0 to len:
     bcs :++
-:   _ lda (V) y, sta PpuData, iny
-:   _ lda (V) y, sta PpuData, iny
-    _ cpy V+2, bne :--
+:   _ lda (@Ptr) y, sta PpuData, iny
+:   _ lda (@Ptr) y, sta PpuData, iny
+    _ cpy @Len, bne :--
     beq @inx_and_loop ; <- unrolls measured tya to here.
 @pace: ; end frame and defer to next nmi if we've drawn
     ; Mutex: draw stores 1, @horiz inc's, so 2 = no draws:
