@@ -94,10 +94,11 @@ KbTail: .res 1 ; 2) main takes.   / modulo KbLen.
 KbLen = 4 ; power of 2. head - tail <= len, modulo 256.
 
 ; video driver [v]:  V VCmds
-VCtrl:  .res 1 ; \ shadow registers. sent next draw, except
-VMask:  .res 1 ; | VCtrl.7 ignored: nmi is kept enabled.
-VSclX:  .res 1 ; | careful of data races. for synchronous
-VSclY:  .res 1 ; / drawing: 0->VMask, vsync, inc Mutex.
+OamPg: .res 1 ; or 0 to use DefaultOam.
+VCtrl: .res 1 ; \ shadow registers [v2] sent next draw.
+VMask: .res 1 ; | VCtrl.7 ignored: nmi is kept enabled.
+VSclX: .res 1 ; | careful of data races. for synchronous
+VSclY: .res 1 ; / drawing: 0->VMask, vsync, inc Mutex.
 ; $0-ff VCmds draw queue indices:
 VHead:   .res 1 ; 1) main appends commands here.
 VCommit: .res 1 ; 2) main moves this fwd to publish to draw.
@@ -115,19 +116,21 @@ CsrRow: .res 1 ; 0-253, except seam rows 30,31,62,63 etc
 ; forth interpreter [f]:
 ; planned: Base, Here, Latest, Pending, InPtr, InEnd.
 
-.bss ; $200-7ff buffers on mainboard.
+.bss ; $100-7ff buffers on mainboard ram.
 
-     .align 256
-Oam:   .res 256  ; sprites data, at $200 conventionally.
-VCmds: .res 256  ; draw commands queue. encodings: [v1].
-       .res 1024 ; (planned location of forth block buffer.)
+        .res 256 ; hardware stack.
+VCmds:  .res 256 ; draw commands queue. encodings: [v1].
+KbPrev: .res 9 ; \ 72 bits arrays of scanned keystates.
+KbHeld: .res 9 ; / 0 = unheld, 1 = held.
+KbDown: .res 9 ; precomputed down-edges Prev->Held.
+KbBuf:  .res KbLen ; scancodes: 0-71, +72 shift held.
+.align 256 ; (planned location of
+.res 1024  ;  forth block buffer.)
 
 .data ; $6000-60ff buffers on cart.
 
-KbPrev:  .res 9 ; \ 72 bits arrays of scanned keystates.
-KbHeld:  .res 9 ; / 0 = unheld, 1 = held.
-KbDown:  .res 9 ; precomputed down-edges Prev->Held.
-KbBuf: .res KbLen ; scancodes: 0-71, +72 shift held.
+DefaultOam: .res 256 ; sprites data, at $200 conventionally.
+; user can configure via OamPg to reuse this space.
 
 ; $6100-7fff - ram
 ;   reserved for scratch to compile user programs into. long
@@ -250,7 +253,7 @@ stop_ne_rshift_cs: ; 22c: flag most recent stop/rshift keys.
 ; https://github.com/bbbradsmith/NES-ca65-example/blob/1bb961dcdf317f39460c0c28a13f33a82feb29c4/example.s#L200-L232
 ; design grown out from this, do refer to it!
 
-; https://www.nesdev.org/wiki/PPU_registers
+; [v2] https://www.nesdev.org/wiki/PPU_registers
 PpuCtrl =   $2000 ; %n?tbsvyx nmi tall bgpat sprpat vert yxtbl
 PpuMask =   $2001 ; %rgbsbllg dimrgb spr bg leftcol greysc
 PpuStatus = $2002 ; %vzo????? vblank zerohit overflow
@@ -265,9 +268,10 @@ draw: ; ~2240c left after nmi prologue.
     bit PpuStatus ; reset PpuAddr/PpuScroll write latch.
     ; load sprites:
     _ lda VMask, sta PpuMask ; bg/sprites on/off
-    _ and #$10, beq :+ ; sprites disabled? -> skip dma
-    _ lda #$00, sta OamAddr ; \ costs
-    _ lda #>Oam, sta OamDma ; / 521c
+    _ and #$10, beq :++ ; sprites disabled? -> skip dma
+    _ lda OamPg, bne :+ ; custom oam page?
+    _ lda #>DefaultOam
+:   _ ldy #0, sty OamAddr, sta OamDma ; 519c
 :   ; save pstack, interpret draw commands, advance tail:
     _ txa, pha, ldx VTail, jsr @horiz, stx VTail, pla, tax
     ; vblank is possibly blown. construct queues carefully!
@@ -477,10 +481,9 @@ reset: ; just powered on, turn off all the things:
     ; needed for reset but runtime will track via Frames.
     bit PpuStatus
 :   _ bit PpuStatus, bpl :- ; first frame
-    lda #0
-:   _ sta $0000 x, sta $0100 x, sta $0200 x
-    _ sta $0300 x, sta $0400 x, sta $0500 x
-    _ sta $0600 x, sta $0700 x, sta $6000 x
+:   _ lda #$ff, sta $6000 x, lda #0 ; DefaultOam
+    _ sta $000 x, sta $100 x, sta $200 x, sta $300 x
+    _ sta $400 x, sta $500 x, sta $600 x, sta $700 x
     _ inx, bne :-
 :   _ bit PpuStatus, bpl :- ; second frame
     _ jsr page, jmp main ; clear bg, start nmi, start main
