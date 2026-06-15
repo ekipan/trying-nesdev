@@ -1,5 +1,5 @@
 MEMORY { # metadata, CPU bus, PPU bus:
-    HDR: file = %O, start = 0, size = $10, type = ro, fill = yes;
+    HDR: file = %O, start = 0, size = 16, type = ro, fill = yes;
     C00: file = "", start = $0000, size = $0100, type = rw;
     C01: file = "", start = $0100, size = $0700, type = rw;
     C60: file = "", start = $6000, size = $0100, type = rw;
@@ -8,12 +8,12 @@ MEMORY { # metadata, CPU bus, PPU bus:
     P00: file = %O, start = $0000, size = $2000, type = ro, fill = yes, fillval = $AA;
 }
 SEGMENTS { # code and data bytes:
-    INES:     type = ro,  load = HDR; # metadata
-    ZEROPAGE: type = zp,  load = C00;
-    BSS:      type = bss, load = C01;
-    DATA:     type = bss, load = C60;
-    RODATA:   type = ro,  load = C80;
-    CODE:     type = ro,  load = CC0;
-    VECTORS:  type = ro,  load = CC0, start = $FFFA;
-    FONT:     type = ro,  load = P00;
+    INES:     load = HDR, type = ro; # metadata
+    ZEROPAGE: load = C00, type = zp;
+    BSS:      load = C01, type = bss;
+    DATA:     load = C60, type = bss;
+    RODATA:   load = C80, type = ro;
+    CODE:     load = CC0, type = ro;
+    VECTORS:  load = CC0, type = ro, start = $FFFA;
+    FONT:     load = P00, type = ro;
 }

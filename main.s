@@ -118,14 +118,12 @@ CsrRow: .res 1 ; 0-253, except seam rows 30,31,62,63 etc
 
 .bss ; $100-7ff buffers on mainboard ram.
 
-        .res 256 ; hardware stack.
+        .res 256 ; hardware stack at $100-1ff.
 VCmds:  .res 256 ; draw commands queue. encodings: [v1].
 KbPrev: .res 9 ; \ 72 bits arrays of scanned keystates.
 KbHeld: .res 9 ; / 0 = unheld, 1 = held.
 KbDown: .res 9 ; precomputed down-edges Prev->Held.
 KbBuf:  .res KbLen ; scancodes: 0-71, +72 shift held.
-.align 256 ; (planned location of
-.res 1024  ;  forth block buffer.)
 
 .data ; $6000-60ff buffers on cart.
 
