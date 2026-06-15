@@ -145,29 +145,28 @@ KbBuf: .res KbLen ; scancodes: 0-71, +72 shift held.
 
 ; in-progress. next: higher-level key queue pull.
 
-wait_50c: ;  cycles per line | cumulative
-          nop          ;  2c |  8c <- 6c jsr wait_50c
-          jsr wait_12c ; 12c | 20c
-wait_36c: jsr wait_12c ; 12c | 32c 18c <- 6c jsr wait_36c
-          jsr wait_12c ; 12c | 44c 30c
-wait_12c: rts          ;  6c | 50c 36c 12c <- 6c jsr wait_12c
+wait_36c: ;  cycles per line | cumulative
+          jsr wait_12c ; 12c | 18c <- 6c jsr wait_36c
+          jsr wait_12c ; 12c | 30c
+wait_12c: rts          ;  6c | 36c 12c <- 6c jsr wait_12c
 
 ; https://www.nesdev.org/wiki/Family_BASIC_Keyboard#Hardware_interface
 Joy1 = $4016 ; %?????mcr strobe matrix, select column, reset.
 Joy2 = $4017 ; %???kkkk? 0 = keys held on current row/column.
 ; switching Joy1.1 high to low advances to next row.
 
-kb_stopscan: ; 105c: scan just stop/rshift into flags.
-    _ lda #5, sta Joy1, jsr wait_12c ; reset to row 0.
-    _ lda #6, sta Joy1, jsr wait_50c ; strobe col 1.
-    _ lda Joy2, eor #$ff, lsr ; read, parse: %0???skrk
-    ; TODO store into KbHeld? decouple flags?
-    jmp kb_flags ; way at the bottom of:
-
-; 1245c full buffer, 1393c idle, 1608c buffer +1:
+kb_quickscan: ; 104c: scan row 0 col 1, stop/rshift keys.
+    _ lda #5, sta Joy1, jsr wait_12c  ; reset to row 0.
+    _ lda #6, sta Joy1                ; strobe col 1, wait 50c:
+    _ jsr wait_36c, nop, nop          ;  40c
+    _ lda #$f0, and @Row0, sta @Row0  ;  10c clear previous.
+    _ lda Joy2, lsr, and #$f, eor #$f ; read, parse: %0000kkkk
+    _ ora @Row0, sta @Row0, rts       ; update array.
+    @Row0 = KbHeld+8
 
 kb_fullscan: ; scan the entire keyboard.
     ; 9 rows * 2 cols * 4 bits = 72 keys.
+    ; 1235c full buffer, 1383c idle, 1606c buffer +1.
     _ lda #5, sta Joy1 ; reset keyboard to row 0.
     jsr wait_12c
     _ lda #4, sta Joy1 ; strobe column 0. wait 50c:
@@ -201,20 +200,20 @@ kb_fullscan: ; scan the entire keyboard.
     ;
     _ @Shift = K+0, @SC = K+1, @TmpX = K+2, @TmpY = K+3
     ;
-    _ jsr @is_queue_full, beq kb_noscan
-    stx @TmpX ; save pstack.
-    _ lda #0, sta @Shift ; 0/72 scancode offset when shift held:
+    _ jsr @is_queue_full, beq @rts
+    _ lda #0, sta @Shift  ; 0 default scancode.
     _ lda KbHeld+8, and #2, bne :+  ; rshift row 0 key 1
     _ lda KbHeld+1, and #1, beq :++ ; lshift row 7 key 0
-:   _ lda #72, sta @Shift
+:   _ lda #72, sta @Shift ; 72 shifted scancode offset.
 :   ; what a big tangly mess!
-    ldx #0 ; x = 0->8 row byte index.
+    _ stx @TmpX ; save pstack.
+    _ ldx #0 ; x = 0->8 row byte index.
   @scan_all:
     _ lda KbDown x, bne @scan_row ; presses on row x?
   @next_row:
     _ inx, cpx #9, bne @scan_all, beq @done
   @scan_row:
-    ldy #0 ; y = 0->7 key bit index. inner loop:
+    _ ldy #0 ; y = 0->7 key bit index. inner loop:
   @scan_bit:
     _ lda KbDown x, and Bitmasks y, bne @buffer_key
     _ iny, cpy #8, bne @scan_bit, beq @next_row
@@ -222,25 +221,24 @@ kb_fullscan: ; scan the entire keyboard.
     _ txa, asl, asl, asl, sta @SC, clc  ; %0rrrr000
     _ tya, ora @SC, adc @Shift, sta @SC ; %0rrrrccc + 0/72
     _ lda KbHead, and #KbLen-1 ; masked ringbuf index
-    sty @TmpY ; stash bit index, append to queue:
+    _ sty @TmpY ; stash bit index, append to queue:
     _ tay, lda @SC, sta KbBuf y, inc KbHead
-    ldy @TmpY ; restore bit index.
+    _ ldy @TmpY ; restore bit index.
     _ jsr @is_queue_full, beq @done
     _ iny, cpy #8, bne @scan_bit, beq @next_row
+  @done:
+    _ ldx @TmpX ; restore pstack.
+  @rts:
+    _ rts
 @is_queue_full: ; subroutine. flag: head - tail == len?
     _ lda KbHead, sec, sbc KbTail, cmp #KbLen, rts
-@done:
-    ldx @TmpX ; restore pstack.
-    ;
-    ; then last, a bit of convenience for the caller:
-    ;
-kb_noscan: ; 22c: read most recent stop/rshift into flags.
-    _ lda KbHeld+8 ; row 0 stop/rshift: %kkkkskrk
-kb_flags: ; stop->nz (bne), rshift->c (bcs).
-    _ lsr, lsr, and #2, rts
 
 Bitmasks:
     .byte 1, 2, 4, 8, $10, $20, $40, $80
+
+stop_ne_rshift_cs: ; 22c: flag most recent stop/rshift keys.
+    _ lda KbHeld+8 ; row 0 %kkkkskrk
+    _ lsr, lsr, and #2, rts ; use bne/bcs to react.
 
 .code ; [v] VIDEO DRIVER ------------------------------------
 
@@ -496,7 +494,8 @@ nmi: ; vblank: 2270c deadline to finish drawing
     jsr draw   ; store 1 in Mutex and process queue.
     ; TODO poll Joy1? sound?
     jsr kb_fullscan ; >1200c, 10.6 scanlines
-    ; jsr kb_stopscan ; TODO configurable scan type.
+    ; jsr kb_quickscan ; TODO configurable scan type.
+    jsr stop_ne_rshift_cs ; flag scanned recovery keys.
     bne reset ; pressed stop? TODO recover instead.
     _ lda #0, sta Mutex ; unlock next frame
 :   _ pla, tay, pla, rti
