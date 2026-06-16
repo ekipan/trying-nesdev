@@ -242,7 +242,8 @@ stop_ne_rshift_cs: ; 22c: flag most recent stop/rshift keys.
 ; screen, draw commands must be sent during 2270c vblank, so
 ; I encode them into a ring buffer to send asynchronously.
 ;
-; https://github.com/bbbradsmith/NES-ca65-example/blob/1bb961dcdf317f39460c0c28a13f33a82feb29c4/example.s#L200-L232
+; https://github.com/bbbradsmith/NES-ca65-example
+; /blob/1bb961dcdf317f39460c0c28a13f33a82/example.s#L200-L232
 ; design grown out from this, do refer to it!
 
 ; [v2] https://www.nesdev.org/wiki/PPU_registers
