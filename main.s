@@ -3,59 +3,21 @@
 ; a goal is to port <https://github.com/ekipan/sss> to it.
 ; lots of TODO design tradeoffs to consider.
 
-; contents: [x] macros [m] memory map [k] keyboard
+; contents: [m] memory map [x] macros [k] keyboard
 ;   [v] video [t] tty [i] interrupts [f] forth
 ;
 ; jump around by grepping crossref markers or names:
 ;   /\[v0\]/ /code_label:/ /DataLabel:/ /ConstantName =/
 
-.segment "INES" ; https://www.nesdev.org/wiki/NES_2.0
-.byte "NES", $1a, PROM&$ff, CROM&$ff ; 0-5
-.byte ((MAPPER&$f)<<4) | ((PSRAM+CSRAM>0)<<1) | MIRROR ; 6
-.byte (MAPPER&$f0) | 8 ; 7: hw nes, binfmt nes2.0
-.byte (MAPPER>>8), ((PROM>>4)&$f0)|(CROM>>8)&$f ; 8-9
-.byte (PSRAM<<4)|PWRAM, (CSRAM<<4)|CWRAM ; 10-11
-.byte 0, 0, 0, PERIPH ; 12-15
-; see Makefile for cart config defines.
-
-; [x] MACROS ------------------------------------------------
-
-.macro COMMA I ; insert a comma before final x or y.
-    .local XY
-    .define XY .right(1, {I})
-    .if .xmatch({XY}, x) || .xmatch({XY}, y) ; N x, N y, (N) y
-        .left(.tcount({I}) - 1, {I}), XY
-    .elseif .xmatch({.right(2, {I})}, {x)}) ; (N x)
-        .left(.tcount({I}) - 2, {I}), x)
-    .else ; all other instructions/directives as-is:
-        I
-    .endif ; eg: COMMA lda $20 x   -> lda $20,x
-.endmacro  ; eg: COMMA sta ($40) y -> sta ($40),y
-
-; works around overloaded indexing/macro-argument comma:
-
-.macro _ I,J,K,L,M,N,O,P ; list of instructions.
-    .if .not .blank({I}) ; up to 8:
-        COMMA I
-        _ J,K,L,M,N,O,P
-    .endif ; eg: _ pha, txa, pha, tya, pha
-.endmacro  ; eg: _ lda $20 x, sta ($40) y, jmp foo
-; rule: loads at start, 0/1 branches at end.
-
-; I very strongly believe code is easier to read if I'm not
-; scrolling up and down, losing context. expect dense code.
-; it does break mesen's source view but its disassembly view
-; has proved wonderfully capable in my debugging.
-
 ; [m] MEMORY MAP --------------------------------------------
-
-.zeropage ; $00-ff system state.
 
 ; registers:
 ;   pc   subroutine-threaded, so forth's ip too.
 ;   sp   return stack offset in page 1.
 ;   x    parameter stack offset: $e0-ff or 0 (empty).
 ;   y/a  scratch, often: y=[H], a=[L].
+
+.zeropage ; $00-ff system state.
 
 ; the parameter stack:
      .res 32
@@ -135,6 +97,44 @@ DefaultOam: .res 256 ; sprites data, at $200 conventionally.
 ;
 ; $c000-ffff - rom
 ;   nes hardware drivers and forth kernel.
+
+; [x] MACROS ------------------------------------------------
+
+.macro COMMA I ; insert a comma before final x or y.
+    .local XY
+    .define XY .right(1, {I})
+    .if .xmatch({XY}, x) || .xmatch({XY}, y) ; N x, N y, (N) y
+        .left(.tcount({I}) - 1, {I}), XY
+    .elseif .xmatch({.right(2, {I})}, {x)}) ; (N x)
+        .left(.tcount({I}) - 2, {I}), x)
+    .else ; all other instructions/directives as-is:
+        I
+    .endif ; eg: COMMA lda $20 x   -> lda $20,x
+.endmacro  ; eg: COMMA sta ($40) y -> sta ($40),y
+
+; works around overloaded indexing/macro-argument comma:
+
+.macro _ I,J,K,L,M,N,O,P ; list of instructions.
+    .if .not .blank({I}) ; up to 8:
+        COMMA I
+        _ J,K,L,M,N,O,P
+    .endif ; eg: _ pha, txa, pha, tya, pha
+.endmacro  ; eg: _ lda $20 x, sta ($40) y, jmp foo
+; rule: loads at start, 0/1 branches at end.
+
+; I very strongly believe code is easier to read if I'm not
+; scrolling up and down, losing context. expect dense code.
+; it does break mesen's source view but its disassembly view
+; has proved wonderfully capable in my debugging.
+
+.segment "INES" ; https://www.nesdev.org/wiki/NES_2.0
+.byte "NES", $1a, PROM&$ff, CROM&$ff ; 0-5
+.byte ((MAPPER&$f)<<4) | ((PSRAM+CSRAM>0)<<1) | MIRROR ; 6
+.byte (MAPPER&$f0) | 8 ; 7: hw nes, binfmt nes2.0
+.byte (MAPPER>>8), ((PROM>>4)&$f0)|(CROM>>8)&$f ; 8-9
+.byte (PSRAM<<4)|PWRAM, (CSRAM<<4)|CWRAM ; 10-11
+.byte 0, 0, 0, PERIPH ; 12-15
+; see Makefile for cart config defines.
 
 .code ; [k] KB DRIVER ---------------------------------------
 
@@ -460,6 +460,26 @@ RomPalette:
 
 .code ; [i] INTERRUPTS --------------------------------------
 
+nmi: ; vblank: 2270c deadline to finish drawing
+    _ bit Config, bvc :+ ; default nmi service?
+    jmp (Nmi) ; no, custom
+:   _ pha, tya, pha ; subroutines responsible for x.
+    _ lda Mutex, bne :+ ; re-entered?
+    inc Frames ; notify main a vblank happened.
+    jsr draw   ; store 1 in Mutex and process queue.
+    ; TODO poll Joy1? sound?
+    jsr kb_fullscan ; >1200c, 10.6 scanlines
+    ; jsr kb_quickscan ; TODO configurable scan type.
+    jsr stop_ne_rshift_cs ; flag scanned recovery keys.
+    bne reset ; pressed stop? TODO recover instead.
+    _ lda #0, sta Mutex ; unlock next frame
+:   _ pla, tay, pla, rti
+
+irq: ; unused, but configurable.
+    _ bit Config, bpl :+
+    jmp (Irq)
+:   rti
+
 DmcFreq = $4010 ; TODO document.
 
 debug: ; jsr here to see the previous stack frame.
@@ -482,26 +502,6 @@ reset: ; just powered on, turn off all the things:
     _ inx, bne :-
 :   _ bit PpuStatus, bpl :- ; second frame
     _ jsr page, jmp main ; clear bg, start nmi, start main
-
-nmi: ; vblank: 2270c deadline to finish drawing
-    _ bit Config, bvc :+ ; default nmi service?
-    jmp (Nmi) ; no, custom
-:   _ pha, tya, pha ; subroutines responsible for x.
-    _ lda Mutex, bne :+ ; re-entered?
-    inc Frames ; notify main a vblank happened.
-    jsr draw   ; store 1 in Mutex and process queue.
-    ; TODO poll Joy1? sound?
-    jsr kb_fullscan ; >1200c, 10.6 scanlines
-    ; jsr kb_quickscan ; TODO configurable scan type.
-    jsr stop_ne_rshift_cs ; flag scanned recovery keys.
-    bne reset ; pressed stop? TODO recover instead.
-    _ lda #0, sta Mutex ; unlock next frame
-:   _ pla, tay, pla, rti
-
-irq: ; unused, but configurable.
-    _ bit Config, bpl :+
-    jmp (Irq)
-:   rti
 
 .segment "VECTORS"
 
