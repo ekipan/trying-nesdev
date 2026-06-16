@@ -9,9 +9,6 @@
 ; jump around by grepping crossref markers or names:
 ;   /\[v0\]/ /code_label:/ /DataLabel:/ /ConstantName =/
 
-.segment "VECTORS" ; https://www.nesdev.org/wiki/CPU_memory_map
-.addr nmi, reset, irq ; look for "vectors" on that page.
-
 .segment "INES" ; https://www.nesdev.org/wiki/NES_2.0
 .byte "NES", $1a, PROM&$ff, CROM&$ff ; 0-5
 .byte ((MAPPER&$f)<<4) | ((PSRAM+CSRAM>0)<<1) | MIRROR ; 6
@@ -468,19 +465,22 @@ RomPalette:
 
 DmcFreq = $4010 ; TODO document.
 
+debug: ; jsr here to see the previous stack frame.
+    _ lda #0, sta Config ; disable custom irq
+    _ brk, nop ; show debugger, then reset:
 reset: ; just powered on, turn off all the things:
     _ sei, cld ; irq, decimal mode
-    _ ldx #$ff, txs ; clear return stack
-    _ ldx #$40, stx Joy2 ; sound, and screen:
-    _ ldx #$00, stx DmcFreq, stx PpuCtrl, stx PpuMask
+    _ lda #$40, ldx #$ff, txs, inx ; stacks, sound, screen:
+    _ sta Joy2, stx DmcFreq, stx PpuCtrl, stx PpuMask
     ; TODO init banks?
     ; wait 2 frames for ppu, init ram in the meantime.
     ; banging the PpuStatus vblank bit risks a missed frame.
     ; needed for reset but runtime will track via Frames.
     bit PpuStatus
 :   _ bit PpuStatus, bpl :- ; first frame
-:   _ lda #$ff, sta $6000 x, lda #0 ; DefaultOam
-    _ sta $000 x, sta $100 x, sta $200 x, sta $300 x
+    ; mitigate stack underflow [i0], sprites offscreen:
+:   _ lda #$fe, sta $100 x, sta $6000 x
+    _ lda #$00, sta $000 x, sta $200 x, sta $300 x
     _ sta $400 x, sta $500 x, sta $600 x, sta $700 x
     _ inx, bne :-
 :   _ bit PpuStatus, bpl :- ; second frame
@@ -505,6 +505,12 @@ irq: ; unused, but configurable.
     _ bit Config, bpl :+
     jmp (Irq)
 :   rti
+
+.segment "VECTORS"
+
+    ; [i0] nes.ld fills space before with nops, then:
+    jmp debug ; underflow returns to $fefe, nop-slides here.
+    .addr nmi, reset, irq
 
 .code ; [f] FORTH -------------------------------------------
 
