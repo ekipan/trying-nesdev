@@ -18,21 +18,21 @@
 .byte 0, 0, 0, PERIPH ; 12-15
 ; see Makefile for cart config defines.
 
-; [x] I HATE SCROLLING --------------------------------------
+; [x] MACROS ------------------------------------------------
 
-; time for a bad first impression! check this out:
+.macro COMMA I ; insert a comma before final x or y.
+    .local XY
+    .define XY .right(1, {I})
+    .if .xmatch({XY}, x) || .xmatch({XY}, y) ; N x, N y, (N) y
+        .left(.tcount({I}) - 1, {I}), XY
+    .elseif .xmatch({.right(2, {I})}, {x)}) ; (N x)
+        .left(.tcount({I}) - 2, {I}), x)
+    .else ; all other instructions/directives as-is:
+        I
+    .endif ; eg: COMMA lda $20 x   -> lda $20,x
+.endmacro  ; eg: COMMA sta ($40) y -> sta ($40),y
 
-.macro COMMA IXN ; insert a comma before final x or y.
-    .local R ; rightmost token
-    .define R .right(1, {IXN})
-    .if .xmatch({R}, x) .or .xmatch({R}, y)
-        .left(.tcount({IXN}) - 1, {IXN}), R
-    .else ; otherwise just a plain instruction:
-        IXN
-    .endif ; eg: COMMA lda $20 x   ; -> lda $20,x
-.endmacro  ; eg: COMMA sta ($40) y ; -> sta ($40),y
-
-; what a goofy macro. why tf would anyone want this? well:
+; works around overloaded indexing/macro-argument comma:
 
 .macro _ I,J,K,L,M,N,O,P ; list of instructions.
     .if .not .blank({I}) ; up to 8:
@@ -42,11 +42,8 @@
 .endmacro  ; eg: _ lda $20 x, sta ($40) y, jmp foo
 ; rule: loads at start, 0/1 branches at end.
 
-; MY IRONCLAD BELIEF: code is easier to read when I don't
-; have to constantly scroll up and down, losing context. it
-; should be *right there*, as much as I can fit on-screen.
-; you can disagree, but you're wrong.
-
+; I very strongly believe code is easier to read if I'm not
+; scrolling up and down, losing context. expect dense code.
 ; it does break mesen's source view but its disassembly view
 ; has proved wonderfully capable in my debugging.
 
