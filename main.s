@@ -376,7 +376,7 @@ draw: ; ~2240c left after nmi prologue.
 ; $0-3f: set PpuAddr. other opcodes far away so overflowed
 ;        addresses are less likely to be misinterpreted:
 VHoriz = $a0 ; \ reset/set increment mode
-VVert =  $a1 ; / bit PpuCtrl.1 (+1/32)
+VVert =  $a1 ; / bit PpuCtrl.2 (+1/32)
 VPut =   $a2 ; args: len val1 val2 val3 ...
 VFill =  $a3 ; args: len val
 VSend =  $a4 ; args: len addrh addrl
