@@ -7,7 +7,6 @@ CA65 ?= ca65 ## 6502 assembler, in the cc65 suite.
 LD65 ?= ld65 ## and its linker.
 MESEN ?= Mesen ## NES emulator with debugging features.
 #:
-
 # Cartridge configuration:
 
 # I'm not very interested in making a real cart but I'd like
@@ -34,36 +33,38 @@ PERIPH = 0x23# $0-4f: 0 none, 1 joypad, $23 basic keyboard
 # These embed into the INES segment in main.s. Then nes.ld
 # arranges bytes in the .nes file and resolves pointers.
 
+## Build targets:
+
+O ?= o/ff.nes  ## rom image:
+LDOPT ?= --dbgfile $@.dbg -Ln $@.lbl -m $@.map
+LDIN ?= nes.ld o/main.o o/font.o
+
+$(O): $(LDIN) | o  ## (default)
+	$(LD65) -o $@ -C $^  $(LDOPT)
+
+CAOPT ?= -g -l $@.lst
 CART = -D MAPPER=$(MAPPER) -D MIRROR=$(MIRROR) \
 -D PROM=$(PROM) -D PWRAM=$(PWRAM) -D PSRAM=$(PSRAM) \
 -D CROM=$(CROM) -D CWRAM=$(CWRAM) -D CSRAM=$(CSRAM) \
 -D PERIPH=$(PERIPH)
 
-CAOPT ?= -g -l $@.lst
-LDOPT ?= --dbgfile $@.dbg -Ln $@.lbl -m $@.map
-LDIN ?= nes.ld o/main.o o/font.o
-
-## Build targets:
-
-o/ff.nes: $(LDIN) | o ## (default)
-	$(LD65) -o $@ -C $^  $(LDOPT)
-
-o/%.o: %.s | o        # code and data.
+o/%.o: %.s | o
 	$(CA65) -o $@ $<  $(CAOPT) $(CART)
 
-all: o/ff.nes
-
-run: o/ff.nes         ## via Mesen.
-	$(MESEN) $< &
-
-clean:                ## remove:
-	$(RM) -r o
-
-o:                    ## outputs directory.
+o:
 	# Try "make help" next for some info.
 	mkdir -p $@
 
-help:                 # list targets.
-	@awk '/^\S/&&/##/; /^#:/{print""}' Makefile ||:
+#:
+.PHONY: all clean help run ##
 
-.PHONY: all clean help run
+all: $(O)
+
+run: $(O)  ## try "make run" to load into Mesen. [!]
+	$(MESEN) $< &
+
+clean:     ## remove o directory.
+	$(RM) -r o
+
+help:
+	@awk '/^\S/&&/##/; /^#:/{print""}' Makefile ||:
