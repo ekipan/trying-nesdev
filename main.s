@@ -30,7 +30,7 @@ H:           ; / to pass data between words. depth 1: x = $ff.
 
 ; scratch space:
 V:   .res 3 ; draw scratch.       \ interrupt
-K:   .res 4 ; kb scanner scratch. / routines.
+K:   .res 2 ; kb scanner scratch. / routines.
 W:   .res 2 ; \ general forth scratch, with
 Src: .res 2 ; | pointers for y-indexed
 Dst: .res 2 ; / byte transfers.
@@ -43,11 +43,6 @@ Frames: .res 1 ; nmi count, for synching or delaying.
 Mutex:  .res 1 ; nonzero: nmi locked, plus draw tally.
 ; a degenerate draw queue eventually tallies Mutex to 128+,
 ; the draw interpreter abandons, nmi recovers [v0].
-
-; kb driver [k]:  K KbPrev KbHeld KbDown KbBuf
-KbHead: .res 1 ; 1) scanner adds. \ $0-ff KbBuf bounds,
-KbTail: .res 1 ; 2) main takes.   / modulo KbLen.
-KbLen = 4 ; power of 2. head - tail <= len, modulo 256.
 
 ; video driver [v]:  V VCmds
 OamPg: .res 1 ; or 0 to use DefaultOam.
@@ -78,8 +73,7 @@ CsrRow: .res 1 ; 0-253, except seam rows 30,31,62,63 etc
 VCmds:  .res 256 ; draw commands queue. encodings: [v1].
 KbPrev: .res 9 ; \ 72 bits arrays of scanned keystates.
 KbHeld: .res 9 ; / 0 = unheld, 1 = held.
-KbDown: .res 9 ; precomputed down-edges Prev->Held.
-KbBuf:  .res KbLen ; scancodes: 0-71, +72 shift held.
+KbDown: .res 9 ; press events bitqueue.
 
 .data ; $6000-60ff buffers on cart.
 
@@ -136,32 +130,40 @@ DefaultOam: .res 256 ; sprites data, at $200 conventionally.
 .byte 0, 0, 0, PERIPH ; 12-15
 ; see Makefile for cart config defines.
 
+.code ; [f] FORTH -------------------------------------------
+
+; planned: core.s stack/math/memory, ui.s interpreter/compiler.
+; I promise it's designed in my head I just gotta get hardware
+; i/o first!
+
+push_a:
+    dex
+    ldy #0
+    _ sty H x, sta L x, rts
+
 .code ; [k] KB DRIVER ---------------------------------------
 
-; in-progress. next: higher-level key queue pull.
-
-wait_36c: ;  cycles per line | cumulative
-          jsr wait_12c ; 12c | 18c <- 6c jsr wait_36c
-          jsr wait_12c ; 12c | 30c
-wait_12c: rts          ;  6c | 36c 12c <- 6c jsr wait_12c
+wait_50c: ;  cycles per line | cumulative
+          nop          ;  2c |  8c <- 6c jsr wait_50c
+          jsr wait_12c ; 12c | 20c
+wait_36c: jsr wait_12c ; 12c | 32c 18c <- 6c jsr wait_36c
+          jsr wait_12c ; 12c | 44c 30c
+wait_12c: rts          ;  6c | 50c 36c 12c <- 6c jsr wait_12c
 
 ; https://www.nesdev.org/wiki/Family_BASIC_Keyboard#Hardware_interface
 Joy1 = $4016 ; %?????mcr strobe matrix, select column, reset.
 Joy2 = $4017 ; %???kkkk? 0 = keys held on current row/column.
 ; switching Joy1.1 high to low advances to next row.
 
-kb_quickscan: ; 104c: scan row 0 col 1, stop/rshift keys.
-    _ lda #5, sta Joy1, jsr wait_12c  ; reset to row 0.
-    _ lda #6, sta Joy1                ; strobe col 1, wait 50c:
-    _ jsr wait_36c, nop, nop          ;  40c
-    _ lda #$f0, and @Row0, sta @Row0  ;  10c clear previous.
-    _ lda Joy2, lsr, and #$f, eor #$f ; read, parse: %0000kkkk
-    _ ora @Row0, sta @Row0, rts       ; update array.
-    @Row0 = KbHeld+8
+kb_stopscan: ; 98c: flag stop/rshift keys.
+    _ lda #5, sta Joy1, jsr wait_12c ; reset to row 0.
+    _ lda #6, sta Joy1, jsr wait_50c ; strobe col 1.
+    _ lda Joy2, lsr                  ; read, parse: %0???skrk
+kb_flags: ; %kkkkskrk flag stop->beq, rshift->bcc.
+    _ lsr, lsr, and #2, rts
 
-kb_fullscan: ; scan the entire keyboard.
+kb_fullscan: ; 1225c: scan the keyboard, queue down events.
     ; 9 rows * 2 cols * 4 bits = 72 keys.
-    ; 1235c full buffer, 1383c idle, 1606c buffer +1.
     _ lda #5, sta Joy1 ; reset keyboard to row 0.
     jsr wait_12c
     _ lda #4, sta Joy1 ; strobe column 0. wait 50c:
@@ -186,54 +188,75 @@ kb_fullscan: ; scan the entire keyboard.
     lda KbPrev,y       ;  4c 21c  1 = prev held
     eor #$ff           ;  2c 23c  1 = prev unheld
     and KbHeld,y       ;  4c 27c  1 = prev unheld & curr held
-    sta KbDown,y       ;  5c 32c  i.e. pressed
-    _ nop, nop         ;  4c 36c
+    ora KbDown,y       ;  4c 31c  \ add bits
+    sta KbDown,y       ;  5c 36c  / to queue.
     _ dey, bpl :-      ;  5c 41c -> : 4c+5c 50c  more rows?
-    ;
-    ; now for the hard part, interpreting KbDown key event
-    ; bits into scancodes to push onto the KbBuf queue.
-    ;
-    _ @Shift = K+0, @SC = K+1, @TmpX = K+2, @TmpY = K+3
-    ;
-    _ jsr @is_queue_full, beq @rts
-    _ lda #0, sta @Shift  ; 0 default scancode.
-    _ lda KbHeld+8, and #2, bne :+  ; rshift row 0 key 1
-    _ lda KbHeld+1, and #1, beq :++ ; lshift row 7 key 0
-:   _ lda #72, sta @Shift ; 72 shifted scancode offset.
-:   ; what a big tangly mess!
-    _ stx @TmpX ; save pstack.
-    _ ldx #0 ; x = 0->8 row byte index.
-  @scan_all:
-    _ lda KbDown x, bne @scan_row ; presses on row x?
-  @next_row:
-    _ inx, cpx #9, bne @scan_all, beq @done
-  @scan_row:
-    _ ldy #0 ; y = 0->7 key bit index. inner loop:
-  @scan_bit:
-    _ lda KbDown x, and Bitmasks y, bne @buffer_key
-    _ iny, cpy #8, bne @scan_bit, beq @next_row
-  @buffer_key: ; compute and store scancode:
-    _ txa, asl, asl, asl, sta @SC, clc  ; %0rrrr000
-    _ tya, ora @SC, adc @Shift, sta @SC ; %0rrrrccc + 0/72
-    _ lda KbHead, and #KbLen-1 ; masked ringbuf index
-    _ sty @TmpY ; stash bit index, append to queue:
-    _ tay, lda @SC, sta KbBuf y, inc KbHead
-    _ ldy @TmpY ; restore bit index.
-    _ jsr @is_queue_full, beq @done
-    _ iny, cpy #8, bne @scan_bit, beq @next_row
-  @done:
-    _ ldx @TmpX ; restore pstack.
-  @rts:
-    _ rts
-@is_queue_full: ; subroutine. flag: head - tail == len?
-    _ lda KbHead, sec, sbc KbTail, cmp #KbLen, rts
+    _ lda KbHeld+8, eor #$ff, jmp kb_flags ; flag raw bits.
+
+; TODO invert KbPrev? keys held on reset would act as if
+; already handled, which is probably what I what.
+
+; --- nmi above, main below, mind the scratch! ---
+; y = 8->0 KbDown byte index = scan row,
+; x = 7->0 that byte's bit index = scan column.
 
 Bitmasks:
     .byte 1, 2, 4, 8, $10, $20, $40, $80
 
-stop_ne_rshift_cs: ; 22c: flag most recent stop/rshift keys.
-    _ lda KbHeld+8 ; row 0 %kkkkskrk
-    _ lsr, lsr, and #2, rts ; use bne/bcs to react.
+kb_pop_yx: ; clear key y=row x=col from KbDown queue.
+    _ lda Bitmasks x, eor #$ff, and KbDown y, sta KbDown y
+    rts
+
+kb_find_yx: ; bpl if y/x = first key of queue, leaves a = 0.
+    _ ldy #8, bne @start_rows
+  @next_row: ; y = 8->0 KbDown row index.
+    _ lda #0, dey, bmi @rts
+  @start_rows:
+    _ lda KbDown y, beq @next_row
+    ; found a row with a key bit on it.
+    _ ldx #7, bne @start_cols
+  @next_col: ; x = 7->0 key col index.
+    _ dex, bmi @next_row
+  @start_cols:
+    _ lda Bitmasks x, and KbDown y, beq @next_col
+    _ lda #0 ; found: clear the negative flag.
+  @rts:
+    rts ; y/x = row/col, bmi if not found.
+kb_next_yx = @next_col ; second entrypoint, continuing y/x-1
+
+; next, translate to scancodes and characters:
+
+; https://www.nesdev.org/wiki/Family_BASIC_Keyboard#Matrix
+ScancodeChars: ;        f1-f8
+    .byte   0, 32,  8,  0,0,  0,  0,  0 ; 32=spc 8=bsp
+    .byte   0,  0,'1','2',0, 27,'q',  0 ; 27=esc
+    .byte 'x','z','e','3',0,'w','s','a'
+    .byte 'f','c','5','4',0,'t','r','d'
+    .byte 'b','v','7','6',0,'y','g','h'
+    .byte 'm','n','9','8',0,'i','u','j'
+    .byte '.',',','p','0',0,'o','l','k'
+    .byte '_','/','-','^',0,'@',':',';'
+    .byte   0,  0, 92,  0,0, 13,'[',']' ; 92=\ 13=ret
+
+kb_char: ; find a = queued character at y/x or 0.
+    ; claims W: scancode calc temp, and x col index stash.
+    _ jsr kb_find_yx, bpl @check_char, bmi @rts
+  @next_char: ; nonproductive key, clear and find another:
+    _ ldx W, jsr kb_pop_yx, jsr kb_next_yx, bmi @rts
+  @check_char:                 ; a bit of W/x juggling:
+    _ tya, asl, asl, asl, sta W ; x %00000ccc W %0rrrr000
+    _ txa, ora W, stx W, tax    ; W %00000ccc x %0rrrrccc
+    _ lda ScancodeChars x, beq @next_char
+    _ ldx W ; y/x = row/col, a = found character.
+  @rts:
+    _ rts
+
+key: ; ( -- c ) wait for a character from the key queue.
+    _ lda #0, sta Mutex ; TODO separate draw/kb mutexes?
+    _ stx W+1 ; stash pstack.
+:   _ jsr kb_char, cmp #0, beq :-
+    _ sta W+2, jsr kb_pop_yx ; stash character, pop key.
+    _ lda W+2, ldx W+1, jmp push_a
 
 .code ; [v] VIDEO DRIVER ------------------------------------
 
@@ -452,8 +475,6 @@ page: ; ( -- ) init and clear the screen.
     _ lda #$0a, sta VMask ; bg on, sprites off
     rts
 
-.rodata
-
 RomPalette:
     .repeat 8
         .byte $0F, $29, $17, $20
@@ -470,9 +491,8 @@ nmi: ; vblank: 2270c deadline to finish drawing
     jsr draw   ; store 1 in Mutex and process queue.
     ; TODO poll Joy1? sound?
     jsr kb_fullscan ; >1200c, 10.6 scanlines
-    ; jsr kb_quickscan ; TODO configurable scan type.
-    jsr stop_ne_rshift_cs ; flag scanned recovery keys.
-    bne reset ; pressed stop? TODO recover instead.
+    ; jsr kb_stopscan ; TODO configurable scan type.
+    beq reset ; pressed stop? TODO recover instead.
     _ lda #0, sta Mutex ; unlock next frame
 :   _ pla, tay, pla, rti
 
@@ -480,6 +500,16 @@ irq: ; unused, but configurable.
     _ bit Config, bpl :+
     jmp (Irq)
 :   rti
+
+; ----- demo stub main -----
+scly_add_a: ; in +/-16 for correct seam jump.
+    _ clc, adc VSclY, tay, cmp #$f0, bcc :+ ; in-screen?
+    _ sbc #$f0, tay ; jump over attrtable
+    _ lda #2, eor VCtrl, sta VCtrl ; flip ntbl, data race 3c:
+:   _ sty VSclY, rts
+main:
+    _ lda #1, jsr scly_add_a, jsr vsync, jmp main
+; ----- demo stub main -----
 
 DmcFreq = $4010 ; TODO document.
 
@@ -509,42 +539,3 @@ reset: ; just powered on, turn off all the things:
     ; [i0] nes.ld fills space before with nops, then:
     jmp debug ; underflow returns to $fefe, nop-slides here.
     .addr nmi, reset, irq
-
-.code ; [f] FORTH -------------------------------------------
-
-; planned: core.s stack/math/memory, ui.s interpreter/compiler.
-
-push_ya: ; push/put_ya/na/a for assembly literals.
-    dex
-put_ya:
-    sty H,x
-    sta L,x
-    rts
-
-plus: ; ( n1 n0 -- n1+n0 ) addition.
-    clc
-    lda L+0,x
-    adc L+1,x
-    sta L+1,x
-    lda H+0,x
-    adc H+1,x
-    sta H+1,x
-    inx
-    rts
-
-add_y: ; scly += a, [-16..16] for correct seam jump.
-    clc
-    adc VSclY
-    tay
-    cmp #$f0
-    bcc :+    ; not between screens?
-    sbc #$f0  ; a = a-240-(1-c)
-    tay
-    lda #2
-    eor VCtrl ; flip
-    sta VCtrl ; ntbl \ data
-:   sty VSclY ;      / race 3c
-    rts
-
-main:
-    _ lda #1, jsr add_y, jsr vsync, jmp main
