@@ -36,7 +36,7 @@ Src: .res 2 ; | pointers for y-indexed
 Dst: .res 2 ; / byte transfers.
 
 ; global configuration [i]:
-Config: .res 1 ; %in?????? custom irq/nmi.
+Config: .res 1 ; %in?????k custom irq/nmi, kb scan type.
 Nmi:    .res 2 ; \ handler routine pointers. set Config
 Irq:    .res 2 ; / to 0 first to update atomically.
 Frames: .res 1 ; nmi count, for synching or delaying.
@@ -158,15 +158,18 @@ Joy1 = $4016 ; %?????mcr strobe matrix, select column, reset.
 Joy2 = $4017 ; %???kkkk? 0 = keys held on current row/column.
 ; switching Joy1.1 high to low advances to next row.
 
-kb_stopscan: ; 98c: flag stop/rshift keys.
-    _ lda #5, sta Joy1, jsr wait_12c ; reset to row 0.
+kb_scan: ; 98c/1221c: scan keys, flag stop->beq, rshift->bcc.
+    _ lda #5, sta Joy1 ; reset to row 0, wait 12c:
+    ; dispatch scan type while waiting for reset:
+    _ nop, bit 0, lda Config, lsr, bcc @full ; 12/13c
+    ; fallthru:
+@quick: ; check stop/rshift keys, don't update state.
     _ lda #6, sta Joy1, jsr wait_50c ; strobe col 1.
-    _ lda Joy2, lsr                  ; read, parse: %0???skrk
-kb_flags: ; %kkkkskrk flag stop->beq, rshift->bcc.
-    _ lsr, lsr, and #2, rts
+    _ lda Joy2, lsr         ; read, parse: %0???skrk
+  @flags:                   ; %kkkkskrk 0 = held.
+    _ lsr, lsr, and #2, rts ; stop->beq, rshift->bcc.
 
-kb_fullscan: ; 1220c: scan the keyboard, queue press events.
-    _ lda #5, sta Joy1, jsr wait_12c ; reset to row 0.
+@full: ; scan the keyboard and queue press events.
     _ lda #4, sta Joy1, jsr wait_48c ; strobe col 0.
     ; 9 rows * 2 cols * 4 bits = 72 keys.
     ldy #8             ; scan 9 rows: 8->0.
@@ -196,7 +199,7 @@ kb_fullscan: ; 1220c: scan the keyboard, queue press events.
     _ nop, nop, nop, php, plp ; 13c 47c
     _ bpl @read0       ;  3c 50c
   @done:
-    _ lda KbHeld+8, eor #$ff, jmp kb_flags ; flag raw bits.
+    _ lda KbHeld+8, eor #$ff, jmp @flags ; flag raw bits.
 
 ; --- nmi above, main below, mind the scratch! ---
 ; y = 8->0 KbDown byte index = scan row,
@@ -492,8 +495,7 @@ nmi: ; vblank: 2270c deadline to finish drawing
     inc Frames ; notify main a vblank happened.
     jsr draw   ; store 1 in Mutex and process queue.
     ; TODO poll Joy1? sound?
-    jsr kb_fullscan ; >1200c, 10.6 scanlines
-    ; jsr kb_stopscan ; TODO configurable scan type.
+    jsr kb_scan
     beq reset ; pressed stop? TODO recover instead.
     _ lda #0, sta Mutex ; unlock next frame
 :   _ pla, tay, pla, rti
