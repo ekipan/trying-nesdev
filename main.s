@@ -71,9 +71,9 @@ CsrRow: .res 1 ; 0-253, except seam rows 30,31,62,63 etc
 
         .res 256 ; hardware stack at $100-1ff.
 VCmds:  .res 256 ; draw commands queue. encodings: [v1].
-KbPrev: .res 9 ; \ 72 bits arrays of scanned keystates.
-KbHeld: .res 9 ; / 0 = unheld, 1 = held.
-KbDown: .res 9 ; press events bitqueue.
+KbPrev: .res 9 ; 1 = unheld  \ 72 bits arrays of scanned
+KbHeld: .res 9 ; 1 = held    | keystates, and 72 bits queue
+KbDown: .res 9 ; 1 = pressed / of unhandled press events.
 
 .data ; $6000-60ff buffers on cart.
 
@@ -143,12 +143,15 @@ push_a:
 
 .code ; [k] KB DRIVER ---------------------------------------
 
-wait_50c: ;  cycles per line | cumulative
-          nop          ;  2c |  8c <- 6c jsr wait_50c
-          jsr wait_12c ; 12c | 20c
-wait_36c: jsr wait_12c ; 12c | 32c 18c <- 6c jsr wait_36c
-          jsr wait_12c ; 12c | 44c 30c
-wait_12c: rts          ;  6c | 50c 36c 12c <- 6c jsr wait_12c
+;            cycles per line | cumulative
+;         jsr wait_XXc ;  6c |  6c  6c  6c <- jsr entry cost
+wait_50c: nop          ;  2c |  8c
+wait_48c: jsr wait_12c ; 12c | 20c 18c
+          jsr wait_12c ; 12c | 32c 30c
+          jsr wait_12c ; 12c | 44c 42c
+wait_12c: rts          ;  6c | 50c 48c 12c
+wait_25c: _ bit 0, php, plp; | 16c (jsr bit php plp)
+          jmp wait_12c ;  9c | 25c (jmp rts)
 
 ; https://www.nesdev.org/wiki/Family_BASIC_Keyboard#Hardware_interface
 Joy1 = $4016 ; %?????mcr strobe matrix, select column, reset.
@@ -162,39 +165,38 @@ kb_stopscan: ; 98c: flag stop/rshift keys.
 kb_flags: ; %kkkkskrk flag stop->beq, rshift->bcc.
     _ lsr, lsr, and #2, rts
 
-kb_fullscan: ; 1225c: scan the keyboard, queue down events.
+kb_fullscan: ; 1220c: scan the keyboard, queue press events.
+    _ lda #5, sta Joy1, jsr wait_12c ; reset to row 0.
+    _ lda #4, sta Joy1, jsr wait_48c ; strobe col 0.
     ; 9 rows * 2 cols * 4 bits = 72 keys.
-    _ lda #5, sta Joy1 ; reset keyboard to row 0.
-    jsr wait_12c
-    _ lda #4, sta Joy1 ; strobe column 0. wait 50c:
-    ; interleave work while waiting for the matrix to settle:
-    ; cycle counts:     line accum
-    _ jsr wait_36c, bit 0 ;  39c
-    ldy #8             ;  2c 41c  scan 9 rows: 8-0.
-:   lda KbHeld,y       ;  4c 45c  \ save previous scan
-    sta KbPrev,y       ;  5c 50c  / while we're here.
+    ldy #8             ; scan 9 rows: 8->0.
+  @read0:
     _ lda Joy2, sta K  ; read column 0: %???kkkk? 0 = held
     _ lda #6, sta Joy1 ; strobe column 1. wait 50c:
-    jsr wait_36c       ; 36c 36c
-    _ lda K, asl, asl  ;  7c 43c  %?kkkk?00 <- column 0
-    _ asl, and #$f0    ;  4c 47c  %kkkk0000
-    sta K              ;  3c 50c
+    ; interleave work while waiting for the matrix to settle:
+    ; cycle counts:     line accum
+    lda KbHeld,y       ;  4c  4c  \ save previous inverted
+    eor #$ff           ;  2c  6c  | scan while we're here.
+    sta KbPrev,y       ;  5c 11c  / 1 = previously unheld.
+    _ lda K, asl, asl  ;  7c 18c  %?kkkk?00 <- column 0
+    _ asl, and #$f0    ;  4c 22c  %kkkk0000
+    sta K              ;  3c 25c
+    jsr wait_25c       ; 25c 50c
+  @read1:
     _ lda Joy2, sta K+1 ; read column 1: %???kkkk? 0 = held
     _ lda #4, sta Joy1 ; strobe next row column 0, wait 50c:
     _ lda K+1, lsr     ;  5c  5c  %0???kkkk <- column 1
     _ and #$0f, ora K  ;  5c 10c  %kkkkkkkk
     eor #$ff           ;  2c 12c  1 = curr held
     sta KbHeld,y       ;  5c 17c
-    lda KbPrev,y       ;  4c 21c  1 = prev held
-    eor #$ff           ;  2c 23c  1 = prev unheld
-    and KbHeld,y       ;  4c 27c  1 = prev unheld & curr held
-    ora KbDown,y       ;  4c 31c  \ add bits
-    sta KbDown,y       ;  5c 36c  / to queue.
-    _ dey, bpl :-      ;  5c 41c -> : 4c+5c 50c  more rows?
+    and KbPrev,y       ;  4c 21c  1 = curr held & prev unheld
+    ora KbDown,y       ;  4c 25c  \ add bits
+    sta KbDown,y       ;  5c 30c  / to queue.
+    _ dey, bmi @done   ;  4c 34c  no more rows?
+    _ nop, nop, nop, php, plp ; 13c 47c
+    _ bpl @read0       ;  3c 50c
+  @done:
     _ lda KbHeld+8, eor #$ff, jmp kb_flags ; flag raw bits.
-
-; TODO invert KbPrev? keys held on reset would act as if
-; already handled, which is probably what I what.
 
 ; --- nmi above, main below, mind the scratch! ---
 ; y = 8->0 KbDown byte index = scan row,
