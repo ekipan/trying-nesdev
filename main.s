@@ -232,6 +232,7 @@ kb_next_yx = @next_col ; second entrypoint, continuing y/x-1
 ; next, translate to scancodes and characters:
 
 ; https://www.nesdev.org/wiki/Family_BASIC_Keyboard#Matrix
+; mesen: en-us->fkb, below: fkb->en-us
 ScancodeChars: ;        f1-f8
     .byte   0, 32,  8,  0,0,  0,  0,  0 ; 32=spc 8=bsp
     .byte   0,  0,'1','2',0, 27,'q',  0 ; 27=esc
@@ -240,28 +241,51 @@ ScancodeChars: ;        f1-f8
     .byte 'b','v','7','6',0,'y','g','h'
     .byte 'm','n','9','8',0,'i','u','j'
     .byte '.',',','p','0',0,'o','l','k'
-    .byte '_','/','-','^',0,'@',':',';'
+    .byte '=','/','-','`',0,'@', 39,';' ; 39='
     .byte   0,  0, 92,  0,0, 13,'[',']' ; 92=\ 13=ret
+    .byte   0, 32,  8,  0,0,  0,  0,  0
+    .byte   0,  0,'!','@',0, 27,'Q',  0
+    .byte 'X','Z','E','#',0,'W','S','A'
+    .byte 'F','C','%','$',0,'T','R','D'
+    .byte 'B','V','&','^',0,'Y','G','H'
+    .byte 'M','N','(','*',0,'I','U','J'
+    .byte '<','>','P',')',0,'O','L','K'
+    .byte '+','?','_','~',0,'@','"',':'
+    .byte   0,  0,'|',  0,0, 13,'{','}'
 
-kb_char: ; find a = queued character at y/x or 0.
-    ; claims W: scancode calc temp, and x col index stash.
-    _ jsr kb_find_yx, bpl @check_char, bmi @rts
+kb_char_yx: ; find a = queued character at y/x or 0.
+    _ @T = W+0, @Shift = W+1 ; scratch.
+    _ lda #0, sta @Shift  ; 0 default scancode.
+    _ lda KbHeld+8, and #2, bne @1 ; rshift row 0 key 1
+    _ lda KbHeld+1, and #1, beq @2 ; lshift row 7 key 0
+@1: _ lda #72, sta @Shift ; 72 shifted scancode offset.
+@2: _ jsr kb_find_yx, bpl @check_char, bmi @rts
   @next_char: ; nonproductive key, clear and find another:
-    _ ldx W, jsr kb_pop_yx, jsr kb_next_yx, bmi @rts
-  @check_char:                 ; a bit of W/x juggling:
-    _ tya, asl, asl, asl, sta W ; x %00000ccc W %0rrrr000
-    _ txa, ora W, stx W, tax    ; W %00000ccc x %0rrrrccc
+    _ ldx @T, jsr kb_pop_yx, jsr kb_next_yx, bmi @rts
+  @check_char:                   ; juggle temp @T/x:
+    _ tya, asl, asl, asl, sta @T ; @T %0rrrr000   x %00000ccc
+    _ txa, ora @T, stx @T        ;  a %0rrrrccc  @T %00000ccc
+    _ clc, adc @Shift, tax       ;  x %0rrrrccc+0/72
     _ lda ScancodeChars x, beq @next_char
-    _ ldx W ; y/x = row/col, a = found character.
+    _ ldx @T ; a = found character, recover x = column
   @rts:
     _ rts
 
+; the forth interface must preserve x = param stack pointer:
+
+kb_poll: ; ( -- c|0 ) take a queued character if available.
+    _ @X = W+2, @Char = W+3 ; scratch.
+    _ stx @X ; stash pstack.
+    _ jsr kb_char_yx, sta @Char, jsr kb_pop_yx
+    _ ldx @X, lda @Char, jmp push_a
+
 key: ; ( -- c ) wait for a character from the key queue.
-    _ lda #0, sta Mutex ; TODO separate draw/kb mutexes?
-    _ stx W+1 ; stash pstack.
-:   _ jsr kb_char, cmp #0, beq :-
-    _ sta W+2, jsr kb_pop_yx ; stash character, pop key.
-    _ lda W+2, ldx W+1, jmp push_a
+    _ lsr Config, asl Config ; clear b0: activate @full scan.
+    _ lda #0, sta Mutex, beq @2 ; TODO separate draw/kb mutex?
+@1: _ inx ; drop zero, poll again:
+@2: _ jsr kb_poll
+    _ lda L x, beq @1
+    _ rts
 
 .code ; [v] VIDEO DRIVER ------------------------------------
 
