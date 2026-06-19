@@ -146,12 +146,9 @@ push_a:
 ;            cycles per line | cumulative
 ;         jsr wait_XXc ;  6c |  6c  6c  6c <- jsr entry cost
 wait_50c: nop          ;  2c |  8c
-wait_48c: jsr wait_12c ; 12c | 20c 18c
-          jsr wait_12c ; 12c | 32c 30c
-          jsr wait_12c ; 12c | 44c 42c
+wait_48c: jsr :+       ; 24c | 32c 30c
+        : jsr wait_12c ; 12c | 44c 42c
 wait_12c: rts          ;  6c | 50c 48c 12c
-wait_25c: _ bit 0, php, plp; | 16c (jsr bit php plp)
-          jmp wait_12c ;  9c | 25c (jmp rts)
 
 ; https://www.nesdev.org/wiki/Family_BASIC_Keyboard#Hardware_interface
 Joy1 = $4016 ; %?????mcr strobe matrix, select column, reset.
@@ -161,7 +158,8 @@ Joy2 = $4017 ; %???kkkk? 0 = keys held on current row/column.
 kb_scan: ; 98c/1221c: scan keys, flag stop->beq, rshift->bcc.
     _ lda #5, sta Joy1 ; reset to row 0, wait 12c:
     ; dispatch scan type while waiting for reset:
-    _ nop, bit 0, lda Config, lsr, bcc @full ; 12/13c
+    _ nop, bit 0 ; 5c
+    _ lda Config, lsr, bcc @full ; +7/8c = 12/13c
     ; fallthru:
 @quick: ; check stop/rshift keys, don't update state.
     _ lda #6, sta Joy1, jsr wait_50c ; strobe col 1.
@@ -184,7 +182,7 @@ kb_scan: ; 98c/1221c: scan keys, flag stop->beq, rshift->bcc.
     _ lda K, asl, asl  ;  7c 18c  %?kkkk?00 <- column 0
     _ asl, and #$f0    ;  4c 22c  %kkkk0000
     sta K              ;  3c 25c
-    jsr wait_25c       ; 25c 50c
+    _ nop, nop, nop, php, plp, jsr wait_12c ; 25c 50c
   @read1:
     _ lda Joy2, sta K+1 ; read column 1: %???kkkk? 0 = held
     _ lda #4, sta Joy1 ; strobe next row column 0, wait 50c:
