@@ -450,10 +450,10 @@ vaddr_ya:
     _ lda W+1, jmp vcmd ; vaddrl
 
 rawemit: ; ( c -- ) display a character.
-    _ jsr vaddr_csr, inc CsrCol
     _ lda CsrCol, cmp #32, bcc :+ ; still on screen?
     jsr cr ; no: go to next line
-:   _ lda #VPut, jsr vcmd, lda #1, jsr vcmd ; put one
+:   _ jsr vaddr_csr, inc CsrCol
+    _ lda #VPut, jsr vcmd, lda #1, jsr vcmd ; put one
     _ lda L x, inx, jsr vcmd, jmp vcommit   ; character
 
 cr: ; ( -- ) move the cursor to the start of next line.
