@@ -473,29 +473,25 @@ cr: ; ( -- ) move the cursor to the start of next line.
     _ lda #32, jsr vcmd    ; an entire row
     _ lda #' ', jmp vcmd   ; with spaces
 
-palette_move:
-    _ lda #$3f, jsr vcmd, lda #0, jsr vcmd    ; to $3f00
-    _ lda #VSend, jsr vcmd, lda #32, jmp vcmd ; send 32b
-
 page: ; ( -- ) init and clear the screen.
     ; called on reset, must enable nmi directly! but *also*
     ; must be callable during normal interpreter use. ~0.6f.
     _ lda #1, sta Mutex ; lock nmi if it's running.
     _ lda #0, sta Config, sta VMask, sta CsrRow, sta CsrCol
     _ sta VCommit, sta VTail, sta VHead ; delete the queue
-    _ jsr palette_move ; and set the default palette:
-    _ lda #>RomPalette, jsr vcmd
-    _ lda #<RomPalette, jsr vcmd, jsr vcommit
     ; scroll cursor in from the bottom of ntb2:
     _ lda #$f8, sta VSclX ; 1 col left  \ overscan
     _ lda #$18, sta VSclY ; 3 rows down / blue area.
     ; https://www.nesdev.org/wiki/Overscan
     _ lda #$82, sta VCtrl, sta PpuCtrl ; enable nmi, ntb2.
     jsr vsync ; also frees the Mutex.
+    ; set the palette:
+    _ lda #$3f, ldy #0, bit PpuStatus, sta PpuAddr, sty PpuAddr
+:   _ lda RomPalette y, sta PpuData, iny, cpy #32, bne :-
     ; clear nametables 1 and 2, see illustration below:
     _ stx W ; save pstack
-    _ ldy #$24, lda #$00, bit PpuStatus, sty PpuAddr, sta PpuAddr
-    _ ldy #$08, ldx #$00, ;lda #$00
+    _ ldy #$24, lda #0, bit PpuStatus, sty PpuAddr, sta PpuAddr
+    _ ldy #$08, ldx #0
 :   stx PpuData ; TODO test pattern: stx, clear: sta
     _ inx, bne :- ; 256 bytes
     _ dey, bne :- ; 8 pages = ntb1/2
