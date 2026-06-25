@@ -121,11 +121,11 @@ DefaultOam: .res 256 ; sprites data, at $200 conventionally.
 ; it does break mesen's source view but its disassembly view
 ; has proved wonderfully capable in my debugging.
 
-.segment "INES" ; https://www.nesdev.org/wiki/NES_2.0
-.byte "NES", $1a, PROM&$ff, CROM&$ff ; 0-5
+.segment "NES20" ; https://www.nesdev.org/wiki/NES_2.0
+.byte "NES", $1a, <PROM, <CROM ; 0-5
 .byte ((MAPPER&$f)<<4) | ((PSRAM+CSRAM>0)<<1) | MIRROR ; 6
 .byte (MAPPER&$f0) | 8 ; 7: hw nes, binfmt nes2.0
-.byte (MAPPER>>8), ((PROM>>4)&$f0)|(CROM>>8)&$f ; 8-9
+.byte >MAPPER, ((PROM>>4)&$f0)|(>CROM)&$f ; 8-9
 .byte (PSRAM<<4)|PWRAM, (CSRAM<<4)|CWRAM ; 10-11
 .byte 0, 0, 0, PERIPH ; 12-15
 ; see Makefile for cart config defines.

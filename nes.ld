@@ -8,7 +8,7 @@ MEMORY { # metadata, CPU bus, PPU bus:
     P00: file = %O, start = $0000, size = $2000, type = ro, fill = yes, fillval = $AA;
 }
 SEGMENTS { # code and data bytes:
-    INES:     load = HDR, type = ro; # metadata
+    NES20:    load = HDR, type = ro; # metadata
     ZEROPAGE: load = C00, type = zp;
     BSS:      load = C01, type = bss;
     DATA:     load = C60, type = bss;
