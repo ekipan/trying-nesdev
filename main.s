@@ -160,12 +160,12 @@ kb_scan: ; 98c/1221c: scan keys, flag stop->beq, rshift->bcc.
     ; dispatch scan type while waiting for reset:
     _ nop, bit 0 ; 5c
     _ lda Config, lsr, bcc @full ; +7/8c = 12/13c
-    ; fallthru:
 @quick: ; check stop/rshift keys, don't update state.
     _ lda #6, sta Joy1, jsr wait_50c ; strobe col 1.
-    _ lda Joy2, lsr         ; read, parse: %0???skrk
-  @flags:                   ; %kkkkskrk 0 = held.
-    _ lsr, lsr, and #2, rts ; stop->beq, rshift->bcc.
+    _ lda Joy2, lsr    ; read, parse: %0???skrk
+  @flags:              ; %kkkkskrk 0 = held.
+    _ lsr, lsr, and #2 ; stop->beq, rshift->bcc.
+    rts
 
 @full: ; scan the keyboard and queue press events.
     _ lda #4, sta Joy1, jsr wait_48c ; strobe col 0.
@@ -197,7 +197,8 @@ kb_scan: ; 98c/1221c: scan keys, flag stop->beq, rshift->bcc.
     _ nop, nop, nop, php, plp ; 13c 47c
     _ bpl @read0       ;  3c 50c
   @done:
-    _ lda KbHeld+8, eor #$ff, jmp @flags ; flag raw bits.
+    _ lda KbHeld+8, eor #$ff ; row 0 raw bits.
+    jmp @flags
 
 ; --- nmi above, main below, mind the scratch! ---
 ; y = 8->0 KbDown byte index = scan row,
